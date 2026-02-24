@@ -1,15 +1,13 @@
 """
 scrape_schedule.py
-Scrapes game schedules from Sidearm Sports JSON API (used by virtually
-all schools in schools.json) and writes to a 'Schedule' tab in Google Sheets.
-
-Credentials read from environment variable GOOGLE_CREDENTIALS (full JSON).
+Scrapes Sidearm Sports schedule pages via their print URL (static HTML)
+and writes results to a 'Schedule' tab in Google Sheets.
 
 Usage:
-    python3 scrape_schedule.py             # scrape all schools
-    python3 scrape_schedule.py --today     # only today's games
-    python3 scrape_schedule.py --school "Maryland"  # one school only
-    python3 scrape_schedule.py --debug     # print raw API response for first school
+    python3 scrape_schedule.py                        # all schools
+    python3 scrape_schedule.py --today                # today only
+    python3 scrape_schedule.py --school "Maryland"    # one school
+    python3 scrape_schedule.py --debug                # save HTML for all schools
 """
 
 import json, os, re, sys, time, argparse
@@ -28,18 +26,26 @@ SCHOOLS_FILE   = 'schools.json'
 REQUEST_DELAY  = 1.5
 CURRENT_YEAR   = datetime.now().year
 
-TV_LOGOS = {
-    'espn+': 'ESPN+', 'espnu': 'ESPNU', 'espn2': 'ESPN2', 'espn': 'ESPN',
-    'sec network': 'SEC Network', 'acc network': 'ACC Network',
-    'big ten network': 'Big Ten Network', 'mlb network': 'MLB Network',
-    'fs1': 'FS1', 'fs2': 'FS2', 'stadium': 'Stadium',
-    'flobaseball': 'FloBaseball', 'youtube': 'YouTube', 'live stream': 'Stream',
+MONTH_MAP = {
+    'january':1,'february':2,'march':3,'april':4,'may':5,'june':6,
+    'july':7,'august':8,'september':9,'october':10,'november':11,'december':12,
+    'jan':1,'feb':2,'mar':3,'apr':4,'jun':6,'jul':7,'aug':8,
+    'sep':9,'oct':10,'nov':11,'dec':12
+}
+
+TV_MAP = {
+    'espn+':'ESPN+','espnu':'ESPNU','espn2':'ESPN2','espn':'ESPN',
+    'sec network':'SEC Network','acc network':'ACC Network',
+    'big ten network':'Big Ten Network','mlb network':'MLB Network',
+    'fs1':'FS1','fs2':'FS2','stadium':'Stadium',
+    'flobaseball':'FloBaseball','youtube':'YouTube','live stream':'Stream',
 }
 
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-                  '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'application/json, text/html, */*',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                  'AppleWebKit/537.36 (KHTML, like Gecko) '
+                  'Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,*/*',
 }
 
 # ── GOOGLE SHEETS AUTH ────────────────────────────────────────────────────────
@@ -75,233 +81,293 @@ def load_schools():
         sys.exit(1)
     return json.loads(p.read_text())
 
-# ── HELPERS ───────────────────────────────────────────────────────────────────
-def base_url(schedule_url):
-    """Extract https://school.com from a full schedule URL."""
-    p = urlparse(schedule_url)
-    return f"{p.scheme}://{p.netloc}"
+# ── DATE / TIME HELPERS ───────────────────────────────────────────────────────
+def parse_date(text):
+    """
+    Try every known date format. Returns YYYY-MM-DD or ''.
+    Handles: 2026-02-14, 2/14/26, 2/14/2026, Feb. 14, February 14, Feb 14 2026
+    """
+    text = text.strip()
 
-def normalize_tv(raw):
-    if not raw: return ''
-    low = raw.lower()
-    for key, label in TV_LOGOS.items():
-        if key in low: return label
-    return raw.strip()
+    # ISO: 2026-02-14
+    m = re.search(r'(\d{4})-(\d{2})-(\d{2})', text)
+    if m: return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
 
-def parse_iso_date(s):
-    """Return YYYY-MM-DD from an ISO-ish string, or ''."""
-    if not s: return ''
-    m = re.search(r'(\d{4})-(\d{2})-(\d{2})', str(s))
-    return f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m else ''
+    # mm/dd/yyyy or mm/dd/yy
+    m = re.search(r'\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b', text)
+    if m:
+        yr = int(m.group(3))
+        yr = yr + 2000 if yr < 100 else yr
+        return f"{yr}-{int(m.group(1)):02d}-{int(m.group(2)):02d}"
 
-def format_time(s):
-    """Return a clean time string like '6:00 PM' from various formats."""
-    if not s: return 'TBD'
-    s = str(s).strip()
-    # Already formatted
-    if re.search(r'\d{1,2}:\d{2}\s*(AM|PM)', s, re.I):
-        return s.upper()
-    # HH:MM:SS
-    m = re.match(r'(\d{1,2}):(\d{2})', s)
+    # Month name: "Feb. 14", "February 14", "Feb 14, 2026"
+    m = re.search(
+        r'\b(january|february|march|april|may|june|july|august|'
+        r'september|october|november|december|'
+        r'jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\.?\s+'
+        r'(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?',
+        text, re.IGNORECASE
+    )
+    if m:
+        mo  = MONTH_MAP[m.group(1).lower()]
+        day = int(m.group(2))
+        yr  = int(m.group(3)) if m.group(3) else CURRENT_YEAR
+        return f"{yr}-{mo:02d}-{day:02d}"
+
+    return ''
+
+
+def parse_time(text):
+    """Extract and normalize a time like '6:00 PM' from any string."""
+    m = re.search(r'(\d{1,2}):(\d{2})\s*(a\.?m\.?|p\.?m\.?)?', text, re.I)
     if m:
         h, mn = int(m.group(1)), m.group(2)
-        ap = 'AM' if h < 12 else 'PM'
+        ap = re.sub(r'\.', '', m.group(3) or '').upper()
+        if not ap:
+            ap = 'PM' if 1 <= h <= 7 else 'AM'
         h12 = h % 12 or 12
         return f"{h12}:{mn} {ap}"
-    return s or 'TBD'
+    # Time without colon: "6 PM"
+    m = re.search(r'\b(\d{1,2})\s*(am|pm)\b', text, re.I)
+    if m:
+        return f"{m.group(1)}:00 {m.group(2).upper()}"
+    return 'TBD'
 
-# ── SIDEARM JSON API ──────────────────────────────────────────────────────────
-# Sidearm exposes schedule data via two known endpoints.
-# We try both and use whichever returns data.
 
-def try_sidearm_json_api(school_base, year=CURRENT_YEAR):
-    """
-    Try Sidearm's schedule JSON API endpoints.
-    Returns list of raw game dicts or None if both fail.
-    """
-    endpoints = [
-        f"{school_base}/services/schedule_stats_handler.ashx"
-        f"?sport_id=MBA&span=year&year={year}",
+def normalize_tv(text):
+    if not text: return ''
+    low = text.lower()
+    for key, label in TV_MAP.items():
+        if key in low: return label
+    return text.strip()
 
-        f"{school_base}/services/schedule_stats_handler.ashx"
-        f"?sport_id=SB&span=year&year={year}",   # fallback sport code
 
-        f"{school_base}/data/json/schedule_baseball_{year}.json",
-
-        f"{school_base}/services/responsive-calendar.ashx"
-        f"?sport_id=MBA&year={year}",
-    ]
-    for url in endpoints:
+# ── SIDEARM PRINT PAGE PARSER ─────────────────────────────────────────────────
+def fetch_print_page(schedule_url):
+    """Fetch ?print=true version of a Sidearm schedule page."""
+    # Try both print URL patterns
+    for url in [schedule_url.rstrip('/') + '?print=true',
+                schedule_url.rstrip('/') + '/print']:
         try:
-            r = requests.get(url, headers=HEADERS, timeout=15)
-            if r.status_code == 200 and r.text.strip().startswith(('{','[')):
-                data = r.json()
-                # Unwrap common wrapper keys
-                for key in ('data', 'schedule', 'games', 'events', 'items'):
-                    if isinstance(data, dict) and key in data:
-                        data = data[key]
-                        break
-                if isinstance(data, list) and len(data) > 0:
-                    print(f"    → Sidearm JSON API hit: {url.split('?')[0].split('/')[-1]}")
-                    return data
-        except Exception:
-            pass
-    return None
-
-
-def try_sidearm_html_embedded(soup):
-    """
-    Sidearm sometimes embeds schedule JSON inside a <script> tag.
-    Look for patterns like: var schedule = [...] or window.__data = {...}
-    """
-    for script in soup.find_all('script'):
-        text = script.string or ''
-        # Look for JSON arrays/objects assigned to variables
-        for pattern in [
-            r'var\s+(?:schedule|scheduleData|games|events)\s*=\s*(\[.*?\]);',
-            r'window\.__(?:schedule|data|state)\s*=\s*(\{.*?\});',
-            r'"games"\s*:\s*(\[.*?\])',
-            r'"schedule"\s*:\s*(\[.*?\])',
-        ]:
-            m = re.search(pattern, text, re.DOTALL)
-            if m:
-                try:
-                    data = json.loads(m.group(1))
-                    if isinstance(data, list) and len(data) > 0:
-                        print(f"    → Found embedded JSON in <script> tag")
-                        return data
-                    if isinstance(data, dict):
-                        for key in ('games','schedule','events','data'):
-                            if key in data and isinstance(data[key], list):
-                                return data[key]
-                except Exception:
-                    pass
-    return None
-
-
-def try_sidearm_print_page(schedule_url):
-    """
-    Sidearm print pages render static HTML with no JS required.
-    Try appending ?print=true or /print to the URL.
-    """
-    for url in [schedule_url + '?print=true', schedule_url + '/print']:
-        try:
-            r = requests.get(url, headers=HEADERS, timeout=15)
-            if r.status_code == 200:
-                soup = BeautifulSoup(r.text, 'html.parser')
-                # Look for table rows with date/opponent data
-                rows = soup.select('tr.schedule_game, tr[class*="game"], .schedule-item')
-                if rows:
-                    print(f"    → Using print page: {url}")
-                    return soup, rows
-        except Exception:
-            pass
+            r = requests.get(url, headers=HEADERS, timeout=20)
+            if r.status_code == 200 and len(r.text) > 500:
+                return url, r.text
+        except Exception as e:
+            print(f"    ⚠️  Fetch error ({url}): {e}")
     return None, None
 
 
-def parse_sidearm_game(game, school):
+def parse_print_page(html, school_name, debug=False):
     """
-    Parse a single game dict from Sidearm JSON API into our standard format.
-    Sidearm field names vary slightly — we check multiple possible keys.
+    Parse Sidearm's ?print=true static HTML schedule.
+
+    Sidearm print pages render a table where each <tr> is one game.
+    Column order varies by school but typically:
+      Date | Opponent | Location/H-A | Time | Result | TV
+
+    Strategy:
+    1. Find the schedule table by looking for rows containing date-like text
+    2. Auto-detect which column index holds date, opponent, time, etc.
+    3. Parse every data row
     """
-    def get(d, *keys):
-        for k in keys:
-            if k in d and d[k] not in (None, '', 'null'):
-                return str(d[k]).strip()
-        return ''
+    soup = BeautifulSoup(html, 'html.parser')
 
-    # Date — try multiple field names
-    raw_date = get(game, 'date', 'game_date', 'Date', 'event_date',
-                   'start_date', 'StartDate')
-    game_date = parse_iso_date(raw_date) or raw_date[:10] if raw_date else ''
+    if debug:
+        # Save full HTML for manual inspection in Codespaces
+        fname = f"debug_{school_name.replace(' ','_').replace('&','and')}.html"
+        Path(fname).write_text(html)
+        print(f"    📄 Saved {fname} ({len(html):,} chars)")
 
-    # Time
-    raw_time = get(game, 'time', 'game_time', 'Time', 'start_time', 'StartTime')
-    game_time = format_time(raw_time)
-
-    # Opponent
-    opponent = get(game, 'opponent', 'Opponent', 'opponent_name',
-                   'OpponentName', 'away_team', 'home_team', 'team_name')
-    # Strip leading "vs." / "at " for cleanliness
-    opponent = re.sub(r'^(vs\.?\s*|at\s+)', '', opponent, flags=re.I).strip()
-
-    # Home/Away
-    loc_fields = get(game, 'location', 'home_away', 'HomeAway',
-                     'game_type', 'GameType', 'is_home')
-    raw_opp    = get(game, 'opponent', 'Opponent', 'opponent_name', '')
-    if loc_fields:
-        lf = loc_fields.lower()
-        if any(x in lf for x in ['away', 'false', '0', 'at ']):
-            home_away = 'Away'
-        elif any(x in lf for x in ['neutral', 'tourney', 'tournament']):
-            home_away = 'Neutral'
-        else:
-            home_away = 'Home'
-    elif raw_opp.lower().startswith(('at ', '@ ')):
-        home_away = 'Away'
-    else:
-        home_away = 'Home'
-
-    # Venue
-    location = get(game, 'location_name', 'venue', 'Venue', 'facility',
-                   'stadium', 'location', 'city')
-
-    # TV / Broadcast
-    tv_raw = get(game, 'broadcast', 'tv', 'TV', 'network',
-                 'broadcast_network', 'coverage')
-    tv = normalize_tv(tv_raw)
-
-    # Result / Score
-    result = get(game, 'result', 'Result', 'score', 'Score',
-                 'game_result', 'final_score')
-
-    return {
-        'school':    school,
-        'date':      game_date,
-        'time':      game_time,
-        'opponent':  opponent,
-        'home_away': home_away,
-        'location':  location,
-        'tv':        tv,
-        'result':    result,
-    }
-
-
-def parse_sidearm_print_rows(rows, school):
-    """Parse static HTML rows from a Sidearm print page."""
     games = []
-    MONTH_MAP = {'jan':1,'feb':2,'mar':3,'apr':4,'may':5,'jun':6,
-                 'jul':7,'aug':8,'sep':9,'oct':10,'nov':11,'dec':12}
-    for row in rows:
-        cells = [c.get_text(strip=True) for c in row.find_all(['td','th'])]
-        if len(cells) < 2: continue
-        text  = ' '.join(cells)
-        # Find date
+
+    # ── Find all tables and pick the one most likely to be the schedule ───────
+    best_table = None
+    best_score = 0
+    for tbl in soup.find_all('table'):
+        text = tbl.get_text(' ')
+        # Score the table by how many date-like strings it contains
+        score = len(re.findall(
+            r'\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*'
+            r'\.?\s+\d{1,2}|\d{1,2}/\d{1,2}/\d{2,4}',
+            text, re.I
+        ))
+        if score > best_score:
+            best_score = score
+            best_table = tbl
+
+    if not best_table:
+        # No tables — try <li> or <div> based layouts
+        return parse_list_layout(soup, school_name)
+
+    rows = best_table.find_all('tr')
+    if not rows:
+        return []
+
+    # ── Auto-detect column positions from header row ──────────────────────────
+    col_date = col_opp = col_time = col_loc = col_result = col_tv = None
+    header_row = rows[0]
+    headers    = [th.get_text(strip=True).lower()
+                  for th in header_row.find_all(['th', 'td'])]
+
+    for i, h in enumerate(headers):
+        if any(x in h for x in ['date','day']):
+            col_date = i
+        elif any(x in h for x in ['opponent','team','vs','game']):
+            col_opp = i
+        elif any(x in h for x in ['time','start']):
+            col_time = i
+        elif any(x in h for x in ['location','site','venue','city','place']):
+            col_loc = i
+        elif any(x in h for x in ['result','score','w/l','record']):
+            col_result = i
+        elif any(x in h for x in ['tv','broadcast','network','coverage']):
+            col_tv = i
+
+    if debug:
+        print(f"    Column map — date:{col_date} opp:{col_opp} "
+              f"time:{col_time} loc:{col_loc} result:{col_result} tv:{col_tv}")
+        print(f"    Headers: {headers}")
+
+    # ── Parse each data row ───────────────────────────────────────────────────
+    for row in rows[1:]:
+        cells = row.find_all(['td', 'th'])
+        if not cells:
+            continue
+        texts = [c.get_text(' ', strip=True) for c in cells]
+        full  = ' '.join(texts)
+
+        # Skip header/section rows (no useful data)
+        if len(texts) < 2:
+            continue
+        if all(t == '' for t in texts):
+            continue
+
+        # ── Extract date ──────────────────────────────────────────────────────
         game_date = ''
-        m = re.search(r'(\d{4})-(\d{2})-(\d{2})', text)
-        if m:
-            game_date = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
-        else:
-            m = re.search(r'(\d{1,2})/(\d{1,2})/(\d{2,4})', text)
-            if m:
-                yr = int(m.group(3)); yr = yr+2000 if yr < 100 else yr
-                game_date = f"{yr}-{int(m.group(1)):02d}-{int(m.group(2)):02d}"
-            else:
-                m = re.search(r'([A-Za-z]{3})\.?\s+(\d{1,2})', text)
-                if m and m.group(1).lower()[:3] in MONTH_MAP:
-                    mo = MONTH_MAP[m.group(1).lower()[:3]]
-                    game_date = f"{CURRENT_YEAR}-{mo:02d}-{int(m.group(2)):02d}"
+        if col_date is not None and col_date < len(texts):
+            game_date = parse_date(texts[col_date])
+        if not game_date:
+            # Scan all cells for a date
+            for t in texts:
+                game_date = parse_date(t)
+                if game_date:
+                    break
+        if not game_date:
+            continue   # Can't use a row with no date
+
+        # ── Extract opponent ──────────────────────────────────────────────────
+        opponent = ''
+        if col_opp is not None and col_opp < len(texts):
+            opponent = texts[col_opp]
+        if not opponent:
+            # Pick the longest non-date, non-time cell as opponent
+            candidates = []
+            for t in texts:
+                if not parse_date(t) and not re.match(r'^\d{1,2}:\d{2}', t):
+                    candidates.append(t)
+            if candidates:
+                opponent = max(candidates, key=len)
+
+        # Clean up "vs. Team" / "at Team" prefixes
+        opponent = re.sub(r'^(vs\.?\s*|at\s+@?\s*)', '', opponent,
+                          flags=re.I).strip()
+        # Remove score that may be appended: "Opponent Name W 7-3"
+        opponent = re.sub(r'\s+[WLT]\s+\d+[-–]\d+.*$', '', opponent).strip()
+
+        if not opponent or len(opponent) < 2:
+            continue
+
+        # ── Home / Away ───────────────────────────────────────────────────────
+        raw_loc = texts[col_loc] if col_loc is not None and col_loc < len(texts) else ''
+        home_away = 'Home'
+        if re.search(r'\baway\b|^@\s', raw_loc + full[:60], re.I):
+            home_away = 'Away'
+        elif re.search(r'\bneutral\b|\btournament\b|\btourney\b|\bclassic\b',
+                       raw_loc + full[:60], re.I):
+            home_away = 'Neutral'
+        # Also check original opponent text before cleaning
+        orig_opp = texts[col_opp] if col_opp is not None and col_opp < len(texts) else full
+        if re.search(r'^at\s|^@\s', orig_opp, re.I):
+            home_away = 'Away'
+
+        # ── Time ─────────────────────────────────────────────────────────────
+        game_time = 'TBD'
+        if col_time is not None and col_time < len(texts):
+            game_time = parse_time(texts[col_time]) if texts[col_time] else 'TBD'
+        if game_time == 'TBD':
+            # Scan all cells
+            for t in texts:
+                pt = parse_time(t)
+                if pt != 'TBD':
+                    game_time = pt
+                    break
+
+        # ── TV ────────────────────────────────────────────────────────────────
+        tv = ''
+        if col_tv is not None and col_tv < len(texts):
+            tv = normalize_tv(texts[col_tv])
+        if not tv:
+            tv_m = re.search(
+                r'\b(espn\+?2?u?|sec network|acc network|fs[12]|'
+                r'big ten network|mlb network|stadium|flobaseball)\b',
+                full, re.I
+            )
+            if tv_m:
+                tv = normalize_tv(tv_m.group(1))
+
+        # ── Result ────────────────────────────────────────────────────────────
+        result = ''
+        if col_result is not None and col_result < len(texts):
+            result = texts[col_result]
+        if not result:
+            r_m = re.search(r'\b([WL])\s+(\d+[-–]\d+)', full)
+            if r_m:
+                result = f"{r_m.group(1)} {r_m.group(2)}"
+
+        games.append({
+            'school':    school_name,
+            'date':      game_date,
+            'time':      game_time,
+            'opponent':  opponent,
+            'home_away': home_away,
+            'location':  raw_loc,
+            'tv':        tv,
+            'result':    result,
+        })
+
+    return games
+
+
+def parse_list_layout(soup, school_name):
+    """
+    Fallback for schools that use <li> or <div> based layouts
+    instead of a <table> on their print page.
+    """
+    games = []
+    containers = (
+        soup.select('li.schedule-item, li[class*="game"], '
+                    'div.schedule-item, div[class*="game-item"], '
+                    'article[class*="game"]')
+    )
+    for item in containers:
+        text      = item.get_text(' ', strip=True)
+        game_date = parse_date(text)
         if not game_date:
             continue
-        opp_m = re.search(r'(?:vs\.?|at)\s+([A-Z][A-Za-z &.\'-]+)', text)
-        opponent = opp_m.group(1).strip() if opp_m else (cells[1] if len(cells) > 1 else '')
-        home_away = 'Away' if re.search(r'\bat\b', text[:30], re.I) else 'Home'
-        time_m = re.search(r'(\d{1,2}:\d{2}\s*(?:AM|PM))', text, re.I)
-        game_time = time_m.group(1).upper() if time_m else 'TBD'
-        if opponent:
-            games.append({'school': school, 'date': game_date, 'time': game_time,
-                          'opponent': opponent, 'home_away': home_away,
-                          'location': '', 'tv': '', 'result': ''})
+        opp_m    = re.search(r'(?:vs\.?|at)\s+([A-Z][A-Za-z &.\'-]+)', text)
+        opponent = opp_m.group(1).strip() if opp_m else ''
+        if not opponent:
+            continue
+        games.append({
+            'school':    school_name,
+            'date':      game_date,
+            'time':      parse_time(text),
+            'opponent':  opponent,
+            'home_away': 'Away' if re.search(r'\bat\b', text[:40], re.I) else 'Home',
+            'location':  '',
+            'tv':        '',
+            'result':    '',
+        })
     return games
 
 
@@ -313,55 +379,18 @@ def scrape_school(entry, debug=False):
         print(f"  ⚠️  No schedule_url for {name}, skipping")
         return []
 
-    school_base = base_url(schedule_url)
-    games       = []
+    url, html = fetch_print_page(schedule_url)
+    if not html:
+        print(f"    ⚠️  Could not fetch print page")
+        return []
 
-    # ── Strategy 1: Sidearm JSON API ─────────────────────────────────────────
-    raw_games = try_sidearm_json_api(school_base, CURRENT_YEAR)
-    if raw_games:
-        if debug:
-            print(f"\n    DEBUG — raw API response (first game):")
-            print(json.dumps(raw_games[0], indent=2)[:800])
-        games = [g for g in
-                 [parse_sidearm_game(g, name) for g in raw_games]
-                 if g['date'] and g['opponent']]
-
-    # ── Strategy 2: Embedded JSON in page <script> tags ──────────────────────
-    if not games:
-        try:
-            r = requests.get(schedule_url, headers=HEADERS, timeout=15)
-            soup = BeautifulSoup(r.text, 'html.parser')
-            if debug:
-                # Save raw HTML for inspection
-                Path(f"debug_{name.replace(' ','_')}.html").write_text(r.text)
-                print(f"    DEBUG — saved raw HTML to debug_{name.replace(' ','_')}.html")
-            embedded = try_sidearm_html_embedded(soup)
-            if embedded:
-                games = [g for g in
-                         [parse_sidearm_game(g, name) for g in embedded]
-                         if g['date'] and g['opponent']]
-        except Exception as e:
-            print(f"    ⚠️  Fetch error: {e}")
-
-    # ── Strategy 3: Sidearm print page ───────────────────────────────────────
-    if not games:
-        print_soup, print_rows = try_sidearm_print_page(schedule_url)
-        if print_rows:
-            games = parse_sidearm_print_rows(print_rows, name)
-
-    # ── Strategy 4: Alternate year endpoint ──────────────────────────────────
-    if not games and str(CURRENT_YEAR) in schedule_url:
-        alt_url = schedule_url.replace(str(CURRENT_YEAR), str(CURRENT_YEAR - 1))
-        raw_games = try_sidearm_json_api(base_url(alt_url), CURRENT_YEAR - 1)
-        if raw_games:
-            games = [g for g in
-                     [parse_sidearm_game(g, name) for g in raw_games]
-                     if g['date'] and g['opponent']]
+    print(f"    → Print page: {url}")
+    games = parse_print_page(html, name, debug=debug)
 
     if games:
         print(f"    ✓  Found {len(games)} games")
     else:
-        print(f"    ⚠️  No games found — run with --debug to inspect raw response")
+        print(f"    ⚠️  No games parsed — run with --debug to save HTML for inspection")
 
     return games
 
@@ -374,7 +403,7 @@ def main():
     parser.add_argument('--school', type=str, default='',
                         help='Scrape one school by name')
     parser.add_argument('--debug',  action='store_true',
-                        help='Print raw API response and save HTML for first school')
+                        help='Save raw HTML files for inspection')
     args = parser.parse_args()
 
     schools = load_schools()
@@ -385,9 +414,8 @@ def main():
             print(f"No school matching '{args.school}'")
             sys.exit(1)
 
-    today_str  = date.today().isoformat()
-    all_games  = []
-    first      = True
+    today_str = date.today().isoformat()
+    all_games = []
 
     for entry in schools:
         name = entry['school']
@@ -395,8 +423,7 @@ def main():
         espn = entry.get('espn_team_id', '')
         print(f"\n🔍 Scraping: {name}")
 
-        games = scrape_school(entry, debug=(args.debug and first))
-        first = False
+        games = scrape_school(entry, debug=args.debug)
 
         for g in games:
             g['division']     = div
@@ -422,7 +449,7 @@ def main():
     existing        = ws.get_all_records()
     scraped_schools = {e['school'] for e in schools}
     kept            = [r for r in existing
-                       if r.get('SCHOOL','') not in scraped_schools]
+                       if r.get('SCHOOL', '') not in scraped_schools]
 
     rows = [[c.upper() for c in COLS]]
     for r in kept:
@@ -431,8 +458,9 @@ def main():
         rows.append([g.get(c, '') for c in COLS])
 
     ws.clear()
-    ws.update('A1', rows)
+    ws.update(values=rows, range_name='A1')   # fixed argument order warning
     print(f"✅ Done — {len(all_games)} games written.")
+
 
 if __name__ == '__main__':
     main()
