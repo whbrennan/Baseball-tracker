@@ -6,148 +6,91 @@
 <title>College Baseball Tracker 2026</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
-  :root {
-    --green:  #1a7a3c;
-    --dkgreen:#135c2d;
-    --gold:   #f0b429;
-    --dark:   #0f1923;
-    --card:   #162230;
-    --border: #1e3448;
-    --text:   #e8edf2;
-    --muted:  #7a8fa6;
-    --up:     #34d399;
-    --down:   #f87171;
-    --hot:    rgba(240,180,41,0.10);
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--dark); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; min-height: 100vh; }
-
-  /* HEADER */
-  header { background: linear-gradient(135deg, var(--dkgreen) 0%, var(--dark) 100%); border-bottom: 3px solid var(--gold); padding: 18px 20px 14px; text-align: center; }
-  header h1 { font-size: clamp(1.2rem, 4vw, 2rem); font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: #fff; }
-  header h1 span { color: var(--gold); }
-  #last-updated { font-size: .75rem; color: var(--muted); margin-top: 4px; }
-
-  /* NAV */
-  nav { display: flex; gap: 4px; padding: 12px 16px 0; border-bottom: 2px solid var(--border); overflow-x: auto; }
-  nav button { background: none; border: none; cursor: pointer; color: var(--muted); font-size: .85rem; font-weight: 600; padding: 8px 18px; border-radius: 6px 6px 0 0; text-transform: uppercase; letter-spacing: .5px; white-space: nowrap; transition: all .15s; }
-  nav button:hover  { background: var(--border); color: var(--text); }
-  nav button.active { background: var(--green); color: #fff; }
-
-  /* CONTROLS */
-  .controls { display: flex; flex-wrap: wrap; gap: 10px; padding: 14px 16px; align-items: center; }
-  .controls label { font-size: .8rem; color: var(--muted); margin-right: 4px; }
-  select, .search-box { background: var(--card); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 6px 10px; font-size: .85rem; }
-  .search-box { min-width: 160px; }
-
-  /* LEGEND */
-  .legend { display: flex; gap: 16px; padding: 0 16px 10px; flex-wrap: wrap; font-size: .73rem; color: var(--muted); }
-  .legend span { display: flex; align-items: center; gap: 5px; }
-  .leg-hot  { width:12px; height:12px; background: var(--hot); border:1px solid var(--gold); border-radius:2px; }
-  .leg-up   { color: var(--up);  font-weight:700; }
-  .leg-down { color: var(--down); font-weight:700; }
-
-  /* TABLE */
-  .table-wrap { overflow-x: auto; padding: 0 16px 24px; }
-  table { width: 100%; border-collapse: collapse; font-size: .82rem; min-width: 600px; }
-  thead tr { background: var(--green); text-transform: uppercase; font-size: .72rem; letter-spacing: .5px; }
-  th { padding: 9px 10px; text-align: center; cursor: pointer; user-select: none; white-space: nowrap; }
-  th:first-child, th:nth-child(2), th:nth-child(3) { text-align: left; }
-  th.sorted-asc::after  { content: ' ▲'; font-size: .65rem; }
-  th.sorted-desc::after { content: ' ▼'; font-size: .65rem; }
-  th:hover { background: var(--dkgreen); }
-  tbody tr { border-bottom: 1px solid var(--border); transition: background .1s; }
-  tbody tr:hover { background: var(--card); }
-  tbody tr.hot-row { background: var(--hot); }
-  tbody tr.hot-row:hover { background: rgba(240,180,41,0.16); }
-  td { padding: 8px 10px; text-align: center; white-space: nowrap; }
-  td:first-child, td:nth-child(2), td:nth-child(3) { text-align: left; }
-  .player-link { font-weight: 700; color: var(--gold); cursor: pointer; text-decoration: underline dotted; }
-  .player-link:hover { color: #fff; }
-  .hot-val { color: var(--gold); font-weight: 700; }
-  .trend-up   { color: var(--up);   font-size: .7rem; margin-left: 3px; }
-  .trend-down { color: var(--down); font-size: .7rem; margin-left: 3px; }
-  .trend-same { color: var(--muted); font-size: .7rem; margin-left: 3px; }
-
-  /* DIVISION BADGES */
-  .div-badge { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: .68rem; font-weight: 700; }
-  .D1    { background: #1a4a7a; color: #7ec8f7; }
-  .D2    { background: #3a2a6a; color: #b89af7; }
-  .D3    { background: #1a4a2a; color: #7af7a0; }
-  .NJCAA { background: #6a3a1a; color: #f7c07a; }
-
-  /* LEADERBOARD */
-  #lb-controls { display: flex; flex-wrap: wrap; gap: 10px; padding: 14px 16px; }
-  .lb-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin: 0 16px 20px; }
-  .lb-title { background: var(--green); padding: 10px 16px; font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; }
-  .lb-row { display: flex; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--border); gap: 12px; cursor: pointer; }
-  .lb-row:last-child { border-bottom: none; }
-  .lb-row:hover { background: rgba(255,255,255,.04); }
-  .lb-rank { width:28px; height:28px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:.85rem; flex-shrink:0; }
-  .rank-1 { background: var(--gold); color: #000; }
-  .rank-2 { background: #b0bec5;     color: #000; }
-  .rank-3 { background: #bf8a52;     color: #fff; }
-  .rank-n { background: var(--border); color: var(--muted); }
-  .lb-name { font-weight:600; flex:1; font-size:.9rem; }
-  .lb-school { font-size:.72rem; color:var(--muted); }
-  .lb-val { font-size:1.1rem; font-weight:800; color:var(--gold); min-width:54px; text-align:right; }
-
-  /* HISTORY PANEL */
-  .chart-wrap { padding:16px; max-width:900px; margin:0 auto; }
-  .chart-box { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:20px; }
-  #history-empty { text-align:center; padding:40px; color:var(--muted); }
-
-  /* STATUS */
-  .status { text-align:center; padding:40px 20px; color:var(--muted); font-size:.9rem; }
-  .spinner { display:inline-block; width:28px; height:28px; border:3px solid var(--border); border-top-color:var(--green); border-radius:50%; animation:spin .7s linear infinite; margin-bottom:10px; }
-  @keyframes spin { to { transform:rotate(360deg); } }
-
-  /* PANELS */
-  .panel { display:none; }
-  .panel.active { display:block; }
-
-  /* MODAL */
-  .modal-overlay {
-    display:none; position:fixed; inset:0;
-    background:rgba(0,0,0,.75); z-index:1000;
-    align-items:center; justify-content:center; padding:16px;
-  }
-  .modal-overlay.open { display:flex; }
-  .modal {
-    background:var(--card); border:1px solid var(--border);
-    border-radius:14px; width:100%; max-width:760px;
-    max-height:90vh; overflow-y:auto;
-  }
-  .modal-header {
-    display:flex; justify-content:space-between; align-items:flex-start;
-    padding:20px 24px 16px; border-bottom:1px solid var(--border);
-    position:sticky; top:0; background:var(--card); z-index:1;
-  }
-  .modal-name { font-size:1.3rem; font-weight:800; color:#fff; }
-  .modal-sub  { font-size:.82rem; color:var(--muted); margin-top:3px; }
-  .modal-close {
-    background:none; border:none; color:var(--muted);
-    font-size:1.4rem; cursor:pointer; padding:4px 8px; line-height:1;
-  }
-  .modal-close:hover { color:#fff; }
-  .modal-body { padding:20px 24px; }
-  .modal-section-title {
-    font-size:.72rem; font-weight:700; text-transform:uppercase;
-    letter-spacing:1px; color:var(--muted); margin:18px 0 10px;
-  }
-  .modal-section-title:first-child { margin-top:0; }
-  .stat-grid {
-    display:grid; grid-template-columns:repeat(auto-fill, minmax(90px,1fr)); gap:10px;
-  }
-  .stat-cell {
-    background:var(--dark); border:1px solid var(--border);
-    border-radius:8px; padding:10px 8px; text-align:center;
-  }
-  .stat-cell.hot { border-color:var(--gold); background:var(--hot); }
-  .stat-label { font-size:.68rem; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
-  .stat-value { font-size:1.15rem; font-weight:800; margin-top:4px; }
-  .stat-value.hot-val { color:var(--gold); }
-  .modal-chart-wrap { margin-top:16px; background:var(--dark); border:1px solid var(--border); border-radius:10px; padding:16px; }
+:root{--green:#1a7a3c;--dkg:#135c2d;--gold:#f0b429;--dark:#0f1923;--card:#162230;--border:#1e3448;--text:#e8edf2;--muted:#7a8fa6;--up:#34d399;--down:#f87171;--hot:rgba(240,180,41,.10);}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--dark);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh;}
+header{background:linear-gradient(135deg,var(--dkg),var(--dark));border-bottom:3px solid var(--gold);padding:18px 20px 14px;text-align:center;}
+header h1{font-size:clamp(1.2rem,4vw,2rem);font-weight:800;letter-spacing:1px;text-transform:uppercase;color:#fff;}
+header h1 span{color:var(--gold);}
+#last-updated{font-size:.75rem;color:var(--muted);margin-top:4px;}
+nav{display:flex;gap:4px;padding:12px 16px 0;border-bottom:2px solid var(--border);overflow-x:auto;}
+nav button{background:none;border:none;cursor:pointer;color:var(--muted);font-size:.82rem;font-weight:600;padding:8px 14px;border-radius:6px 6px 0 0;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;transition:all .15s;}
+nav button:hover{background:var(--border);color:var(--text);}
+nav button.active{background:var(--green);color:#fff;}
+.controls{display:flex;flex-wrap:wrap;gap:10px;padding:14px 16px;align-items:center;}
+.controls label{font-size:.8rem;color:var(--muted);margin-right:4px;}
+select,.search-box{background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 10px;font-size:.85rem;}
+.search-box{min-width:160px;}
+.legend{display:flex;gap:16px;padding:0 16px 10px;flex-wrap:wrap;font-size:.73rem;color:var(--muted);}
+.legend span{display:flex;align-items:center;gap:5px;}
+.leg-hot{width:12px;height:12px;background:var(--hot);border:1px solid var(--gold);border-radius:2px;}
+.table-wrap{overflow-x:auto;padding:0 16px 24px;}
+table{width:100%;border-collapse:collapse;font-size:.82rem;min-width:600px;}
+thead tr{background:var(--green);text-transform:uppercase;font-size:.72rem;letter-spacing:.5px;}
+th{padding:9px 10px;text-align:center;cursor:pointer;user-select:none;white-space:nowrap;}
+th:first-child,th:nth-child(2),th:nth-child(3){text-align:left;}
+th.sorted-asc::after{content:' ▲';font-size:.65rem;}
+th.sorted-desc::after{content:' ▼';font-size:.65rem;}
+th:hover{background:var(--dkg);}
+tbody tr{border-bottom:1px solid var(--border);transition:background .1s;}
+tbody tr:hover{background:var(--card);}
+tbody tr.hot-row{background:var(--hot);}
+td{padding:8px 10px;text-align:center;white-space:nowrap;}
+td:first-child,td:nth-child(2),td:nth-child(3){text-align:left;}
+.player-link{font-weight:700;color:var(--gold);cursor:pointer;text-decoration:underline dotted;}
+.player-link:hover{color:#fff;}
+.hot-val{color:var(--gold);font-weight:700;}
+.trend-up{color:var(--up);font-size:.7rem;margin-left:2px;}
+.trend-down{color:var(--down);font-size:.7rem;margin-left:2px;}
+.trend-same{color:var(--muted);font-size:.7rem;margin-left:2px;}
+.div-badge{display:inline-block;padding:2px 7px;border-radius:4px;font-size:.68rem;font-weight:700;}
+.D1{background:#1a4a7a;color:#7ec8f7;}.D2{background:#3a2a6a;color:#b89af7;}
+.D3{background:#1a4a2a;color:#7af7a0;}.NJCAA{background:#6a3a1a;color:#f7c07a;}
+#lb-controls{display:flex;flex-wrap:wrap;gap:10px;padding:14px 16px;}
+.lb-card{background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin:0 16px 20px;}
+.lb-title{background:var(--green);padding:10px 16px;font-size:.8rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;}
+.lb-row{display:flex;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);gap:12px;cursor:pointer;}
+.lb-row:last-child{border-bottom:none;}
+.lb-row:hover{background:rgba(255,255,255,.04);}
+.lb-rank{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.85rem;flex-shrink:0;}
+.rank-1{background:var(--gold);color:#000;}.rank-2{background:#b0bec5;color:#000;}
+.rank-3{background:#bf8a52;color:#fff;}.rank-n{background:var(--border);color:var(--muted);}
+.lb-name{font-weight:600;flex:1;font-size:.9rem;}.lb-school{font-size:.72rem;color:var(--muted);}
+.lb-val{font-size:1.1rem;font-weight:800;color:var(--gold);min-width:54px;text-align:right;}
+.chart-wrap{padding:16px;max-width:900px;margin:0 auto;}
+.chart-box{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;}
+.status{text-align:center;padding:40px 20px;color:var(--muted);font-size:.9rem;}
+.spinner{display:inline-block;width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--green);border-radius:50%;animation:spin .7s linear infinite;margin-bottom:10px;}
+@keyframes spin{to{transform:rotate(360deg);}}
+.panel{display:none;}.panel.active{display:block;}
+/* MODAL */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:1000;align-items:center;justify-content:center;padding:16px;}
+.modal-overlay.open{display:flex;}
+.modal{background:var(--card);border:1px solid var(--border);border-radius:14px;width:100%;max-width:800px;max-height:90vh;overflow-y:auto;}
+.modal-header{display:flex;justify-content:space-between;align-items:flex-start;padding:20px 24px 16px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--card);z-index:1;}
+.modal-name{font-size:1.3rem;font-weight:800;color:#fff;}
+.modal-sub{font-size:.82rem;color:var(--muted);margin-top:3px;}
+.modal-close{background:none;border:none;color:var(--muted);font-size:1.4rem;cursor:pointer;padding:4px 8px;}
+.modal-close:hover{color:#fff;}
+.modal-body{padding:20px 24px;}
+.modal-section-title{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin:18px 0 10px;}
+.modal-section-title:first-child{margin-top:0;}
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:10px;}
+.stat-cell{background:var(--dark);border:1px solid var(--border);border-radius:8px;padding:10px 8px;text-align:center;}
+.stat-cell.hot{border-color:var(--gold);background:var(--hot);}
+.stat-label{font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;}
+.stat-value{font-size:1.1rem;font-weight:800;margin-top:4px;}
+.stat-value.hot-val{color:var(--gold);}
+.modal-2col{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;}
+@media(max-width:600px){.modal-2col{grid-template-columns:1fr;}}
+.modal-chart-wrap{background:var(--dark);border:1px solid var(--border);border-radius:10px;padding:16px;}
+/* PROGRESS BARS */
+.arc-bar-wrap{margin-bottom:10px;}
+.arc-label{display:flex;justify-content:space-between;font-size:.75rem;margin-bottom:4px;}
+.arc-label span:last-child{color:var(--muted);}
+.arc-track{height:8px;background:var(--border);border-radius:4px;overflow:hidden;}
+.arc-fill{height:100%;border-radius:4px;background:var(--green);transition:width .4s;}
+.arc-fill.over{background:var(--gold);}
 </style>
 </head>
 <body>
@@ -160,7 +103,10 @@
 <nav>
   <button class="active" onclick="showPanel('batting',this)">⚾ Batting</button>
   <button onclick="showPanel('pitching',this)">🥎 Pitching</button>
+  <button onclick="showPanel('defense',this)">🛡️ Defense</button>
   <button onclick="showPanel('leaderboard',this)">🏆 Leaderboard</button>
+  <button onclick="showPanel('compare',this)">⚡ Compare</button>
+  <button onclick="showPanel('scatter',this)">🔵 Scatter</button>
   <button onclick="showPanel('history',this)">📈 History</button>
 </nav>
 
@@ -170,25 +116,19 @@
     <div><label>Division</label>
       <select id="bat-div" onchange="renderBatting()">
         <option value="ALL">All</option><option value="D1">D1</option>
-        <option value="D2">D2</option><option value="D3">D3</option>
-        <option value="NJCAA">NJCAA</option>
-      </select>
-    </div>
-    <div><label>Search</label>
-      <input class="search-box" id="bat-search" placeholder="Player or school…" oninput="renderBatting()"/>
-    </div>
+        <option value="D2">D2</option><option value="D3">D3</option><option value="NJCAA">NJCAA</option>
+      </select></div>
+    <div><label>Search</label><input class="search-box" id="bat-search" placeholder="Player or school…" oninput="renderBatting()"/></div>
   </div>
   <div class="legend">
-    <span><span class="leg-hot"></span> Elite performance</span>
-    <span><span class="leg-up">▲</span> Trending up vs last scrape</span>
-    <span><span class="leg-down">▼</span> Trending down vs last scrape</span>
+    <span><span class="leg-hot"></span>Elite performance</span>
+    <span><span style="color:var(--up);font-weight:700">▲</span>Trending up</span>
+    <span><span style="color:var(--down);font-weight:700">▼</span>Trending down</span>
+    <span>🔥 Hot streak (3+ consecutive improvements)</span>
   </div>
   <div class="table-wrap">
-    <div id="bat-status" class="status"><div class="spinner"></div><br>Loading batting stats…</div>
-    <table id="bat-table" style="display:none">
-      <thead><tr id="bat-head"></tr></thead>
-      <tbody id="bat-body"></tbody>
-    </table>
+    <div id="bat-status" class="status"><div class="spinner"></div><br>Loading…</div>
+    <table id="bat-table" style="display:none"><thead><tr id="bat-head"></tr></thead><tbody id="bat-body"></tbody></table>
   </div>
 </div>
 
@@ -198,25 +138,35 @@
     <div><label>Division</label>
       <select id="pit-div" onchange="renderPitching()">
         <option value="ALL">All</option><option value="D1">D1</option>
-        <option value="D2">D2</option><option value="D3">D3</option>
-        <option value="NJCAA">NJCAA</option>
-      </select>
-    </div>
-    <div><label>Search</label>
-      <input class="search-box" id="pit-search" placeholder="Player or school…" oninput="renderPitching()"/>
-    </div>
+        <option value="D2">D2</option><option value="D3">D3</option><option value="NJCAA">NJCAA</option>
+      </select></div>
+    <div><label>Search</label><input class="search-box" id="pit-search" placeholder="Player or school…" oninput="renderPitching()"/></div>
   </div>
   <div class="legend">
-    <span><span class="leg-hot"></span> Elite performance</span>
-    <span><span class="leg-up">▲</span> Trending up vs last scrape</span>
-    <span><span class="leg-down">▼</span> Trending down vs last scrape</span>
+    <span><span class="leg-hot"></span>Elite performance</span>
+    <span><span style="color:var(--up);font-weight:700">▲</span>Trending up</span>
+    <span><span style="color:var(--down);font-weight:700">▼</span>Trending down</span>
+    <span>🔥 Hot streak</span>
   </div>
   <div class="table-wrap">
-    <div id="pit-status" class="status"><div class="spinner"></div><br>Loading pitching stats…</div>
-    <table id="pit-table" style="display:none">
-      <thead><tr id="pit-head"></tr></thead>
-      <tbody id="pit-body"></tbody>
-    </table>
+    <div id="pit-status" class="status"><div class="spinner"></div><br>Loading…</div>
+    <table id="pit-table" style="display:none"><thead><tr id="pit-head"></tr></thead><tbody id="pit-body"></tbody></table>
+  </div>
+</div>
+
+<!-- DEFENSE -->
+<div id="panel-defense" class="panel">
+  <div class="controls">
+    <div><label>Division</label>
+      <select id="def-div" onchange="renderDefense()">
+        <option value="ALL">All</option><option value="D1">D1</option>
+        <option value="D2">D2</option><option value="D3">D3</option><option value="NJCAA">NJCAA</option>
+      </select></div>
+    <div><label>Search</label><input class="search-box" id="def-search" placeholder="Player or school…" oninput="renderDefense()"/></div>
+  </div>
+  <div class="table-wrap">
+    <div id="def-status" class="status"><div class="spinner"></div><br>Loading…</div>
+    <table id="def-table" style="display:none"><thead><tr id="def-head"></tr></thead><tbody id="def-body"></tbody></table>
   </div>
 </div>
 
@@ -224,51 +174,63 @@
 <div id="panel-leaderboard" class="panel">
   <div id="lb-controls">
     <div><label>Category</label>
-      <select id="lb-cat" onchange="renderLeaderboard()">
-        <option value="batting">Batting</option>
-        <option value="pitching">Pitching</option>
-      </select>
-    </div>
-    <div><label>Stat</label>
-      <select id="lb-stat" onchange="renderLeaderboard()"></select>
-    </div>
+      <select id="lb-cat" onchange="renderLeaderboard()"><option value="batting">Batting</option><option value="pitching">Pitching</option></select></div>
+    <div><label>Stat</label><select id="lb-stat" onchange="renderLeaderboard()"></select></div>
     <div><label>Division</label>
       <select id="lb-div" onchange="renderLeaderboard()">
         <option value="ALL">All</option><option value="D1">D1</option>
-        <option value="D2">D2</option><option value="D3">D3</option>
-        <option value="NJCAA">NJCAA</option>
-      </select>
-    </div>
+        <option value="D2">D2</option><option value="D3">D3</option><option value="NJCAA">NJCAA</option>
+      </select></div>
   </div>
-  <div id="lb-content" class="status"><div class="spinner"></div><br>Loading leaderboard…</div>
+  <div id="lb-content" class="status"><div class="spinner"></div><br>Loading…</div>
+</div>
+
+<!-- COMPARE -->
+<div id="panel-compare" class="panel">
+  <div class="controls">
+    <div><label>Player 1</label><select id="cmp-p1" onchange="renderCompare()"></select></div>
+    <div><label>Player 2</label><select id="cmp-p2" onchange="renderCompare()"></select></div>
+    <div><label>Player 3</label><select id="cmp-p3" onchange="renderCompare()"></select></div>
+    <div><label>Stat</label><select id="cmp-stat" onchange="renderCompare()"></select></div>
+  </div>
+  <div class="chart-wrap">
+    <div class="chart-box"><canvas id="cmp-chart"></canvas></div>
+    <div id="cmp-empty" class="status" style="display:none">Not enough history data yet — check back after a few scrape runs.</div>
+  </div>
+</div>
+
+<!-- SCATTER -->
+<div id="panel-scatter" class="panel">
+  <div class="controls">
+    <div><label>X Axis</label><select id="sct-x" onchange="renderScatter()"></select></div>
+    <div><label>Y Axis</label><select id="sct-y" onchange="renderScatter()"></select></div>
+    <div><label>Group</label>
+      <select id="sct-grp" onchange="renderScatter()">
+        <option value="batting">Batting</option><option value="pitching">Pitching</option>
+      </select></div>
+  </div>
+  <div class="chart-wrap">
+    <div class="chart-box"><canvas id="sct-chart"></canvas></div>
+  </div>
 </div>
 
 <!-- HISTORY -->
 <div id="panel-history" class="panel">
   <div class="controls">
-    <div><label>Player</label>
-      <select id="hist-player" onchange="updateHistoryStats()"></select>
-    </div>
-    <div><label>Stat</label>
-      <select id="hist-stat" onchange="renderHistory()"></select>
-    </div>
+    <div><label>Player</label><select id="hist-player" onchange="updateHistoryStats()"></select></div>
+    <div><label>Stat</label><select id="hist-stat" onchange="renderHistory()"></select></div>
   </div>
   <div class="chart-wrap">
     <div class="chart-box"><canvas id="hist-chart"></canvas></div>
-    <div id="history-empty" style="display:none">
-      No history data yet — check back after the next scheduled scrape.
-    </div>
+    <div id="history-empty" style="display:none;text-align:center;padding:40px;color:var(--muted)">No history yet — check back after a few scrape runs.</div>
   </div>
 </div>
 
-<!-- PLAYER PROFILE MODAL -->
+<!-- PROFILE MODAL -->
 <div class="modal-overlay" id="modal-overlay" onclick="closeModal(event)">
-  <div class="modal" id="modal">
+  <div class="modal">
     <div class="modal-header">
-      <div>
-        <div class="modal-name" id="modal-name"></div>
-        <div class="modal-sub"  id="modal-sub"></div>
-      </div>
+      <div><div class="modal-name" id="modal-name"></div><div class="modal-sub" id="modal-sub"></div></div>
       <button class="modal-close" onclick="closeProfileModal()">✕</button>
     </div>
     <div class="modal-body" id="modal-body"></div>
@@ -278,84 +240,72 @@
 <script>
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 const SPREADSHEET_ID  = '1vZ9retMliQq99hw2twZ-KtlvLKLOStkcHq73CAx94gs';
-const LOWER_IS_BETTER = new Set(['ERA','WHIP','BB_per_9','E','BB','xFIP']);
+const LOWER_IS_BETTER = new Set(['ERA','WHIP','BB_per_9','E','BB','xFIP','BB_pct','K_pct']);
 const LABELS = {
-  G:'G', GS:'GS', AB:'AB', R:'R', H:'H', '2B':'2B', '3B':'3B',
-  HR:'HR', RBI:'RBI', BB:'BB', SO:'SO', HBP:'HBP', SAC:'SAC',
-  SF:'SF', SB:'SB', CS:'CS', AVG:'AVG', OBP:'OBP', SLG:'SLG', OPS:'OPS',
-  W:'W', L:'L', SV:'SV', IP:'IP', ER:'ER', ERA:'ERA', WHIP:'WHIP',
-  K_per_9:'K/9', BB_per_9:'BB/9', K_BB:'K:BB', xFIP:'xFIP'
+  G:'G',GS:'GS',AB:'AB',R:'R',H:'H','2B':'2B','3B':'3B',HR:'HR',RBI:'RBI',
+  BB:'BB',SO:'SO',HBP:'HBP',SAC:'SAC',SF:'SF',SB:'SB',CS:'CS',
+  AVG:'AVG',OBP:'OBP',SLG:'SLG',OPS:'OPS',ISO:'ISO',BABIP:'BABIP',
+  BB_pct:'BB%',K_pct:'K%',
+  W:'W',L:'L',SV:'SV',IP:'IP',ER:'ER',ERA:'ERA',WHIP:'WHIP',
+  K_per_9:'K/9',BB_per_9:'BB/9',K_BB:'K:BB',xFIP:'xFIP',
+  TC:'TC',PO:'PO',A:'A',E:'E','FLD%':'FLD%',DP:'DP'
 };
-const BAT_COLS = ['G','AB','R','H','2B','3B','HR','RBI','BB','SO','AVG','OBP','SLG','OPS'];
-const PIT_COLS = ['G','GS','W','L','SV','IP','H','ER','BB','SO','ERA','WHIP','K_per_9','BB_per_9','K_BB','xFIP'];
+const BAT_COLS = ['G','AB','R','H','2B','3B','HR','RBI','BB','SO','AVG','OBP','SLG','OPS','ISO','BABIP','BB_pct','K_pct'];
+const PIT_COLS = ['G','GS','W','L','SV','IP','H','ER','BB','SO','ERA','WHIP','K_per_9','BB_per_9','K_BB','xFIP','BB_pct','K_pct'];
+const DEF_COLS = ['TC','PO','A','E','FLD%','DP'];
+const CMP_COLORS = ['#f0b429','#7ec8f7','#b89af7'];
+const DIV_COLORS = { D1:'#7ec8f7', D2:'#b89af7', D3:'#7af7a0', NJCAA:'#f7c07a' };
 
-// Thresholds for highlighting — [stat, operator, value]
-const BAT_THRESHOLDS = { AVG:.350, OPS:1.000, HR:5, RBI:20, SB:8 };
-const PIT_THRESHOLDS = { ERA:2.00, WHIP:1.00, K_per_9:10.0, SV:3 };
-// For pitching, lower ERA/WHIP is good; for others higher is good
+const BAT_THRESHOLDS = { AVG:.350, OPS:1.000, HR:5, RBI:20, SB:8, ISO:.250 };
+const PIT_THRESHOLDS = { ERA:2.00, WHIP:1.00, K_per_9:10.0, SV:3, K_BB:3.0 };
 const isHot = (col, val, type) => {
-  const t = type === 'batting' ? BAT_THRESHOLDS : PIT_THRESHOLDS;
-  if (!(col in t)) return false;
+  const t = type==='batting' ? BAT_THRESHOLDS : PIT_THRESHOLDS;
   const v = parseFloat(val);
-  if (isNaN(v) || v === 0) return false;
+  if (!(col in t) || isNaN(v) || v===0) return false;
   return LOWER_IS_BETTER.has(col) ? v <= t[col] : v >= t[col];
 };
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
-let batData=[], pitData=[], batHistory=[], pitHistory=[];
-let batSort  = { col:'OPS', dir:-1 };
-let pitSort  = { col:'ERA', dir: 1 };
-let histChart = null, modalChart = null;
+let batData=[],pitData=[],defData=[],batHistory=[],pitHistory=[];
+let batSort={col:'OPS',dir:-1}, pitSort={col:'ERA',dir:1}, defSort={col:'FLD%',dir:-1};
+let histChart=null, cmpChart=null, sctChart=null, modalChart=null, modalRadar=null;
 
-// ── TREND HELPERS ─────────────────────────────────────────────────────────────
-function getPrevRow(history, pid) {
-  const rows = history
-    .filter(r => r.PlayerID === pid)
-    .sort((a,b) => b.Last_Updated.localeCompare(a.Last_Updated));
-  return rows.length >= 2 ? rows[1] : null;
-}
-function trendArrow(col, curr, prev) {
-  if (!prev) return '';
-  const c = parseFloat(curr), p = parseFloat(prev[col]);
-  if (isNaN(c) || isNaN(p) || c === p) return '<span class="trend-same">—</span>';
-  const improved = LOWER_IS_BETTER.has(col) ? c < p : c > p;
-  return improved
-    ? '<span class="trend-up">▲</span>'
-    : '<span class="trend-down">▼</span>';
-}
-
-// ── CSV FETCH ─────────────────────────────────────────────────────────────────
-function csvUrl(sheet) {
-  return `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet=${sheet}`;
-}
+// ── CSV ───────────────────────────────────────────────────────────────────────
+const csvUrl = s => `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet=${s}`;
 function parseCsv(text) {
   const lines = text.trim().split('\n');
   const hdrs  = lines[0].split(',').map(h => h.replace(/^"|"$/g,'').trim());
   return lines.slice(1).map(line => {
-    const vals = line.match(/(".*?"|[^,]+|(?<=,)(?=,)|^(?=,)|(?<=,)$)/g) || [];
+    const vals = line.match(/(".*?"|[^,]+|(?<=,)(?=,)|^(?=,)|(?<=,)$)/g)||[];
     const obj  = {};
-    hdrs.forEach((h,i) => { obj[h] = (vals[i]||'').replace(/^"|"$/g,'').trim(); });
+    hdrs.forEach((h,i) => { obj[h]=(vals[i]||'').replace(/^"|"$/g,'').trim(); });
     return obj;
   });
 }
 async function fetchSheet(name) {
   const r = await fetch(csvUrl(name));
-  if (!r.ok) throw new Error(`Failed to fetch: ${name}`);
+  if (!r.ok) throw new Error(`Failed: ${name}`);
   return parseCsv(await r.text());
 }
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
 async function init() {
   try {
-    [batData, pitData] = await Promise.all([fetchSheet('Batting'), fetchSheet('Pitching')]);
+    [batData, pitData, defData] = await Promise.all([
+      fetchSheet('Batting'), fetchSheet('Pitching'), fetchSheet('Defense')
+    ]);
     try {
       [batHistory, pitHistory] = await Promise.all([
         fetchSheet('Batting_History'), fetchSheet('Pitching_History')
       ]);
-    } catch(e) { console.warn('History tabs not yet available:', e.message); }
+    } catch(e) { console.warn('History tabs not available yet'); }
     const ts = [...batData,...pitData].map(r=>r.Last_Updated).filter(Boolean).sort().pop();
     document.getElementById('last-updated').textContent = ts ? `Last updated: ${ts}` : 'Stats loaded';
-    renderBatting(); renderPitching(); populateLbStats(); renderLeaderboard(); populateHistoryControls();
+    renderBatting(); renderPitching(); renderDefense();
+    populateLbStats(); renderLeaderboard();
+    populateCompare(); renderCompare();
+    populateScatter(); renderScatter();
+    populateHistoryControls();
   } catch(e) {
     document.querySelectorAll('.status').forEach(el => {
       el.innerHTML = `⚠️ Could not load stats.<br><small>${e.message}</small>`;
@@ -367,260 +317,376 @@ async function init() {
 function showPanel(name, btn) {
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
-  document.getElementById('panel-' + name).classList.add('active');
+  document.getElementById('panel-'+name).classList.add('active');
   btn.classList.add('active');
 }
 
-// ── FILTER / SORT ─────────────────────────────────────────────────────────────
+// ── HELPERS ───────────────────────────────────────────────────────────────────
 function filterRows(data, divId, searchId) {
   const div = document.getElementById(divId).value;
   const q   = document.getElementById(searchId).value.toLowerCase();
   return data.filter(r => {
-    const divOk  = div==='ALL' || r.Division===div;
-    const srchOk = !q || (r.Name||'').toLowerCase().includes(q) || (r.School||'').toLowerCase().includes(q);
-    return divOk && srchOk;
+    return (div==='ALL'||r.Division===div) &&
+      (!q||(r.Name||'').toLowerCase().includes(q)||(r.School||'').toLowerCase().includes(q));
   });
 }
 function sortRows(rows, col, dir) {
-  return [...rows].sort((a,b) => {
-    const av = parseFloat(a[col])||0, bv = parseFloat(b[col])||0;
-    return (bv - av) * dir;
-  });
+  return [...rows].sort((a,b) => ((parseFloat(b[col])||0)-(parseFloat(a[col])||0))*dir);
 }
 function setSort(state, col) {
-  if (state.col===col) state.dir *= -1;
-  else { state.col=col; state.dir = LOWER_IS_BETTER.has(col) ? 1 : -1; }
+  state.col===col ? state.dir*=-1 : (state.col=col, state.dir=LOWER_IS_BETTER.has(col)?1:-1);
 }
+function getPrev(history, pid) {
+  const rows = history.filter(r=>r.PlayerID===pid).sort((a,b)=>b.Last_Updated.localeCompare(a.Last_Updated));
+  return rows.length>=2 ? rows[1] : null;
+}
+function trendArrow(col, curr, prev) {
+  if (!prev) return '';
+  const c=parseFloat(curr), p=parseFloat(prev[col]);
+  if (isNaN(c)||isNaN(p)||c===p) return '<span class="trend-same">—</span>';
+  const good = LOWER_IS_BETTER.has(col) ? c<p : c>p;
+  return good ? '<span class="trend-up">▲</span>' : '<span class="trend-down">▼</span>';
+}
+function getStreak(history, pid, type) {
+  const stat = type==='batting'?'OPS':'ERA';
+  const rows = history.filter(r=>r.PlayerID===pid&&parseFloat(r[stat])>0)
+    .sort((a,b)=>a.Last_Updated.localeCompare(b.Last_Updated));
+  if (rows.length<3) return 0;
+  let streak=0;
+  for (let i=rows.length-1;i>0;i--) {
+    const c=parseFloat(rows[i][stat]), p=parseFloat(rows[i-1][stat]);
+    const better = type==='batting'?c>p:c<p;
+    if (better) streak++; else break;
+  }
+  return streak;
+}
+function getPercentile(val, allVals, lowerBetter) {
+  const v=parseFloat(val)||0;
+  const sorted=[...allVals].filter(x=>x>0).sort((a,b)=>a-b);
+  if (!sorted.length) return 50;
+  const rank=sorted.filter(x=>x<=v).length;
+  const pct=Math.round(rank/sorted.length*100);
+  return lowerBetter ? 100-pct : pct;
+}
+const shortSchool = s => (s||'').replace('University','Univ.').replace('College','Col.');
 
 // ── BUILD TABLE ───────────────────────────────────────────────────────────────
 function buildTable(rows, cols, sortState, headId, bodyId, statusId, tableId, sortFn, type) {
-  const status = document.getElementById(statusId);
-  const table  = document.getElementById(tableId);
-  if (!rows.length) {
-    status.textContent   = 'No players match the current filter.';
-    status.style.display = '';
-    table.style.display  = 'none';
-    return;
-  }
-  status.style.display = 'none';
-  table.style.display  = '';
-
+  const status=document.getElementById(statusId), table=document.getElementById(tableId);
+  if (!rows.length) { status.textContent='No players match.'; status.style.display=''; table.style.display='none'; return; }
+  status.style.display='none'; table.style.display='';
+  const history = type==='batting'?batHistory:type==='pitching'?pitHistory:[];
   document.getElementById(headId).innerHTML =
-    `<th onclick="${sortFn}('Name')">Player</th>` +
-    `<th onclick="${sortFn}('School')">School</th>` +
-    `<th>Div</th>` +
-    cols.map(c =>
-      `<th onclick="${sortFn}('${c}')" class="${sortState.col===c?(sortState.dir===-1?'sorted-desc':'sorted-asc'):''}">${LABELS[c]||c}</th>`
-    ).join('');
-
-  const history = type === 'batting' ? batHistory : pitHistory;
+    `<th onclick="${sortFn}('Name')">Player</th><th onclick="${sortFn}('School')">School</th><th>Div</th>` +
+    cols.map(c=>`<th onclick="${sortFn}('${c}')" class="${sortState.col===c?(sortState.dir===-1?'sorted-desc':'sorted-asc'):''}">${LABELS[c]||c}</th>`).join('');
   document.getElementById(bodyId).innerHTML =
     sortRows(rows, sortState.col, sortState.dir).map(r => {
-      const prev   = getPrevRow(history, r.PlayerID);
-      const hotRow = cols.some(c => isHot(c, r[c], type));
-      const cells  = cols.map(c => {
-        const hot   = isHot(c, r[c], type);
-        const arrow = trendArrow(c, r[c], prev);
-        return `<td class="${hot?'hot-val':''}">${r[c]||'—'}${arrow}</td>`;
-      }).join('');
+      const prev=history.length?getPrev(history,r.PlayerID):null;
+      const streak=history.length?getStreak(history,r.PlayerID,type):0;
+      const hotRow=cols.some(c=>isHot(c,r[c],type));
+      const cells=cols.map(c=>`<td class="${isHot(c,r[c],type)?'hot-val':''}">${r[c]||'—'}${trendArrow(c,r[c],prev)}</td>`).join('');
+      const fire=streak>=3?'🔥':'';
       return `<tr class="${hotRow?'hot-row':''}">
-        <td><span class="player-link" onclick="openProfile('${r.PlayerID}','${type}')">${r.Name||''}</span></td>
-        <td style="font-size:.78rem;color:var(--muted)">${(r.School||'').replace('University','Univ.').replace('College','Col.')}</td>
+        <td><span class="player-link" onclick="openProfile('${r.PlayerID}','${type}')">${r.Name||''}${fire}</span></td>
+        <td style="font-size:.78rem;color:var(--muted)">${shortSchool(r.School)}</td>
         <td><span class="div-badge ${r.Division||''}">${r.Division||''}</span></td>
-        ${cells}
-      </tr>`;
+        ${cells}</tr>`;
     }).join('');
 }
 
-// ── BATTING ───────────────────────────────────────────────────────────────────
-function renderBatting() {
-  buildTable(filterRows(batData,'bat-div','bat-search'), BAT_COLS, batSort,
-    'bat-head','bat-body','bat-status','bat-table','sortBat','batting');
-}
-function sortBat(col) { setSort(batSort,col); renderBatting(); }
-
-// ── PITCHING ──────────────────────────────────────────────────────────────────
-function renderPitching() {
-  buildTable(filterRows(pitData,'pit-div','pit-search'), PIT_COLS, pitSort,
-    'pit-head','pit-body','pit-status','pit-table','sortPit','pitching');
-}
-function sortPit(col) { setSort(pitSort,col); renderPitching(); }
+// ── BATTING / PITCHING / DEFENSE ──────────────────────────────────────────────
+function renderBatting()  { buildTable(filterRows(batData,'bat-div','bat-search'),BAT_COLS,batSort,'bat-head','bat-body','bat-status','bat-table','sortBat','batting'); }
+function sortBat(col)     { setSort(batSort,col); renderBatting(); }
+function renderPitching() { buildTable(filterRows(pitData,'pit-div','pit-search'),PIT_COLS,pitSort,'pit-head','pit-body','pit-status','pit-table','sortPit','pitching'); }
+function sortPit(col)     { setSort(pitSort,col); renderPitching(); }
+function renderDefense()  { buildTable(filterRows(defData,'def-div','def-search'),DEF_COLS,defSort,'def-head','def-body','def-status','def-table','sortDef','defense'); }
+function sortDef(col)     { setSort(defSort,col); renderDefense(); }
 
 // ── LEADERBOARD ───────────────────────────────────────────────────────────────
 function populateLbStats() {
   const catEl=document.getElementById('lb-cat'), statEl=document.getElementById('lb-stat');
-  function update() {
-    const cols = catEl.value==='batting' ? BAT_COLS : PIT_COLS;
-    statEl.innerHTML = cols.map(c=>`<option value="${c}">${LABELS[c]||c}</option>`).join('');
-    statEl.value = catEl.value==='batting' ? 'OPS' : 'ERA';
-  }
-  catEl.addEventListener('change', update);
-  update();
+  const update=()=>{
+    const cols=catEl.value==='batting'?BAT_COLS:PIT_COLS;
+    statEl.innerHTML=cols.map(c=>`<option value="${c}">${LABELS[c]||c}</option>`).join('');
+    statEl.value=catEl.value==='batting'?'OPS':'ERA';
+  };
+  catEl.addEventListener('change',update); update();
 }
 function renderLeaderboard() {
   const cat=document.getElementById('lb-cat').value, stat=document.getElementById('lb-stat').value;
   const div=document.getElementById('lb-div').value, el=document.getElementById('lb-content');
   const data=cat==='batting'?batData:pitData, asc=LOWER_IS_BETTER.has(stat);
-  const type=cat;
-  let rows=data
-    .filter(r=>(div==='ALL'||r.Division===div)&&parseFloat(r[stat])>0)
-    .sort((a,b)=>asc?parseFloat(a[stat])-parseFloat(b[stat]):parseFloat(b[stat])-parseFloat(a[stat]))
-    .slice(0,10);
-  if (!rows.length) { el.innerHTML='<div class="status">No data available yet.</div>'; return; }
-  el.innerHTML=`<div class="lb-card">
-    <div class="lb-title">${LABELS[stat]||stat} Leaders${div!=='ALL'?' — '+div:''}</div>
-    ${rows.map((r,i)=>`
-      <div class="lb-row" onclick="openProfile('${r.PlayerID}','${type}')">
-        <div class="lb-rank ${['rank-1','rank-2','rank-3'][i]||'rank-n'}">${i+1}</div>
-        <div>
-          <div class="lb-name">${r.Name||''}</div>
-          <div class="lb-school">${r.School||''} &nbsp;<span class="div-badge ${r.Division||''}">${r.Division||''}</span></div>
-        </div>
-        <div class="lb-val">${r[stat]||'—'}</div>
-      </div>`).join('')}
+  const rows=data.filter(r=>(div==='ALL'||r.Division===div)&&parseFloat(r[stat])>0)
+    .sort((a,b)=>asc?parseFloat(a[stat])-parseFloat(b[stat]):parseFloat(b[stat])-parseFloat(a[stat])).slice(0,10);
+  if (!rows.length) { el.innerHTML='<div class="status">No data yet.</div>'; return; }
+  el.innerHTML=`<div class="lb-card"><div class="lb-title">${LABELS[stat]||stat} Leaders${div!=='ALL'?' — '+div:''}</div>
+    ${rows.map((r,i)=>`<div class="lb-row" onclick="openProfile('${r.PlayerID}','${cat}')">
+      <div class="lb-rank ${['rank-1','rank-2','rank-3'][i]||'rank-n'}">${i+1}</div>
+      <div><div class="lb-name">${r.Name||''}</div>
+      <div class="lb-school">${r.School||''} &nbsp;<span class="div-badge ${r.Division||''}">${r.Division||''}</span></div></div>
+      <div class="lb-val">${r[stat]||'—'}</div></div>`).join('')}
   </div>`;
 }
 
-// ── HISTORY PANEL ─────────────────────────────────────────────────────────────
-function populateHistoryControls() {
-  const players=[
+// ── COMPARE ───────────────────────────────────────────────────────────────────
+function populateCompare() {
+  const all=[
     ...batData.map(r=>({id:r.PlayerID,name:r.Name,type:'batting'})),
     ...pitData.map(r=>({id:r.PlayerID,name:r.Name,type:'pitching'}))
   ].sort((a,b)=>a.name.localeCompare(b.name));
-  document.getElementById('hist-player').innerHTML =
-    players.map(p=>`<option value="${p.id}|${p.type}">${p.name}</option>`).join('');
-  updateHistoryStats();
+  const opts=`<option value="">— none —</option>`+all.map(p=>`<option value="${p.id}|${p.type}">${p.name}</option>`).join('');
+  ['cmp-p1','cmp-p2','cmp-p3'].forEach((id,i)=>{
+    document.getElementById(id).innerHTML=opts;
+    if (i<all.length) document.getElementById(id).value=`${all[i].id}|${all[i].type}`;
+  });
+  // Stat options: union of bat+pit cols
+  const allCols=[...new Set([...BAT_COLS,...PIT_COLS])];
+  document.getElementById('cmp-stat').innerHTML=allCols.map(c=>`<option value="${c}">${LABELS[c]||c}</option>`).join('');
+  document.getElementById('cmp-stat').value='OPS';
 }
-function updateHistoryStats() {
-  const [,type]=document.getElementById('hist-player').value.split('|');
-  const statEl=document.getElementById('hist-stat');
-  statEl.innerHTML=(type==='batting'?BAT_COLS:PIT_COLS)
-    .map(c=>`<option value="${c}">${LABELS[c]||c}</option>`).join('');
-  statEl.value=type==='batting'?'AVG':'ERA';
-  renderHistory();
+function renderCompare() {
+  const stat=document.getElementById('cmp-stat').value;
+  const pids=['cmp-p1','cmp-p2','cmp-p3'].map(id=>document.getElementById(id).value).filter(Boolean);
+  const empty=document.getElementById('cmp-empty');
+  const chartBox=document.querySelector('#panel-compare .chart-box');
+  if (!pids.length) { chartBox.style.display='none'; empty.style.display=''; return; }
+
+  // Build unified date list
+  const allDates=new Set();
+  pids.forEach(pv=>{
+    const [pid,type]=pv.split('|');
+    const hist=type==='batting'?batHistory:pitHistory;
+    hist.filter(r=>r.PlayerID===pid).forEach(r=>allDates.add(r.Last_Updated.split(' ')[0]));
+  });
+  const dates=[...allDates].sort();
+  if (dates.length<2) { chartBox.style.display='none'; empty.style.display=''; return; }
+  chartBox.style.display=''; empty.style.display='none';
+
+  const datasets=pids.map((pv,i)=>{
+    const [pid,type]=pv.split('|');
+    const hist=type==='batting'?batHistory:pitHistory;
+    const rows=hist.filter(r=>r.PlayerID===pid).sort((a,b)=>a.Last_Updated.localeCompare(b.Last_Updated));
+    const name=(rows[0]?.Name)||pid;
+    const dateMap={};
+    rows.forEach(r=>{ dateMap[r.Last_Updated.split(' ')[0]]=parseFloat(r[stat])||null; });
+    return {
+      label:name, spanGaps:true, tension:0.3, pointRadius:4,
+      borderColor:CMP_COLORS[i], backgroundColor:CMP_COLORS[i]+'33',
+      data:dates.map(d=>dateMap[d]??null)
+    };
+  });
+
+  if (cmpChart) cmpChart.destroy();
+  cmpChart=new Chart(document.getElementById('cmp-chart'),{
+    type:'line', data:{labels:dates,datasets},
+    options:{responsive:true,
+      plugins:{legend:{labels:{color:'#e8edf2'}},
+        tooltip:{backgroundColor:'#162230',borderColor:'#1e3448',borderWidth:1,titleColor:'#f0b429',bodyColor:'#e8edf2'}},
+      scales:{x:{ticks:{color:'#7a8fa6',maxRotation:45},grid:{color:'#1e3448'}},
+              y:{ticks:{color:'#7a8fa6'},grid:{color:'#1e3448'}}}}
+  });
 }
-function renderHistory(canvasId='hist-chart', chartRef='histChart', pid=null, stat=null, type=null) {
-  pid  = pid  || document.getElementById('hist-player').value.split('|')[0];
-  type = type || document.getElementById('hist-player').value.split('|')[1];
-  stat = stat || document.getElementById('hist-stat').value;
-  const history=type==='batting'?batHistory:pitHistory;
-  const empty=document.getElementById('history-empty');
-  const chartBox=document.querySelector('.chart-box');
-  const rows=history
-    .filter(r=>r.PlayerID===pid&&r[stat]!==''&&r[stat]!=='0')
-    .sort((a,b)=>a.Last_Updated.localeCompare(b.Last_Updated));
-  if (rows.length<2) {
-    if (chartBox) chartBox.style.display='none';
-    if (empty) empty.style.display='';
-    return null;
-  }
-  if (chartBox) chartBox.style.display='';
-  if (empty) empty.style.display='none';
-  if (histChart) histChart.destroy();
-  histChart = new Chart(document.getElementById(canvasId), {
-    type:'line',
-    data:{
-      labels:rows.map(r=>r.Last_Updated.split(' ')[0]),
-      datasets:[{
-        label:`${rows[0].Name} — ${LABELS[stat]||stat}`,
-        data:rows.map(r=>parseFloat(r[stat])||0),
-        borderColor:'#1a7a3c', backgroundColor:'rgba(26,122,60,0.15)',
-        pointBackgroundColor:'#f0b429', pointRadius:5, pointHoverRadius:7,
-        tension:0.3, fill:true
-      }]
-    },
-    options:{
-      responsive:true,
+
+// ── SCATTER ───────────────────────────────────────────────────────────────────
+function populateScatter() {
+  const grpEl=document.getElementById('sct-grp');
+  const update=()=>{
+    const cols=grpEl.value==='batting'?BAT_COLS:PIT_COLS;
+    ['sct-x','sct-y'].forEach((id,i)=>{
+      document.getElementById(id).innerHTML=cols.map(c=>`<option value="${c}">${LABELS[c]||c}</option>`).join('');
+    });
+    document.getElementById('sct-x').value=grpEl.value==='batting'?'OBP':'ERA';
+    document.getElementById('sct-y').value=grpEl.value==='batting'?'SLG':'K_per_9';
+    renderScatter();
+  };
+  grpEl.addEventListener('change',update); update();
+}
+function renderScatter() {
+  const grp=document.getElementById('sct-grp').value;
+  const xCol=document.getElementById('sct-x').value, yCol=document.getElementById('sct-y').value;
+  const data=grp==='batting'?batData:pitData;
+  const divs=['D1','D2','D3','NJCAA'];
+  const datasets=divs.map(div=>({
+    label:div,
+    backgroundColor:DIV_COLORS[div]+'cc',
+    pointRadius:7, pointHoverRadius:9,
+    data:data.filter(r=>r.Division===div&&parseFloat(r[xCol])>0&&parseFloat(r[yCol])>0)
+      .map(r=>({x:parseFloat(r[xCol]),y:parseFloat(r[yCol]),name:r.Name,pid:r.PlayerID,type:grp}))
+  })).filter(d=>d.data.length);
+
+  if (sctChart) sctChart.destroy();
+  sctChart=new Chart(document.getElementById('sct-chart'),{
+    type:'scatter', data:{datasets},
+    options:{responsive:true,
       plugins:{
-        legend:{labels:{color:'#e8edf2',font:{size:13}}},
-        tooltip:{backgroundColor:'#162230',borderColor:'#1e3448',borderWidth:1,titleColor:'#f0b429',bodyColor:'#e8edf2'}
+        legend:{labels:{color:'#e8edf2'}},
+        tooltip:{backgroundColor:'#162230',borderColor:'#1e3448',borderWidth:1,titleColor:'#f0b429',bodyColor:'#e8edf2',
+          callbacks:{label:ctx=>`${ctx.raw.name}: (${ctx.raw.x}, ${ctx.raw.y})`}},
       },
+      onClick:(e,els)=>{ if(els.length){const d=datasets[els[0].datasetIndex].data[els[0].index]; openProfile(d.pid,d.type);} },
       scales:{
-        x:{ticks:{color:'#7a8fa6',maxRotation:45},grid:{color:'#1e3448'}},
-        y:{ticks:{color:'#7a8fa6'},grid:{color:'#1e3448'}}
+        x:{title:{display:true,text:LABELS[xCol]||xCol,color:'#7a8fa6'},ticks:{color:'#7a8fa6'},grid:{color:'#1e3448'}},
+        y:{title:{display:true,text:LABELS[yCol]||yCol,color:'#7a8fa6'},ticks:{color:'#7a8fa6'},grid:{color:'#1e3448'}}
       }
     }
   });
 }
 
-// ── PLAYER PROFILE MODAL ──────────────────────────────────────────────────────
+// ── HISTORY ───────────────────────────────────────────────────────────────────
+function populateHistoryControls() {
+  const all=[
+    ...batData.map(r=>({id:r.PlayerID,name:r.Name,type:'batting'})),
+    ...pitData.map(r=>({id:r.PlayerID,name:r.Name,type:'pitching'}))
+  ].sort((a,b)=>a.name.localeCompare(b.name));
+  document.getElementById('hist-player').innerHTML=all.map(p=>`<option value="${p.id}|${p.type}">${p.name}</option>`).join('');
+  updateHistoryStats();
+}
+function updateHistoryStats() {
+  const [,type]=document.getElementById('hist-player').value.split('|');
+  const statEl=document.getElementById('hist-stat');
+  statEl.innerHTML=(type==='batting'?BAT_COLS:PIT_COLS).map(c=>`<option value="${c}">${LABELS[c]||c}</option>`).join('');
+  statEl.value=type==='batting'?'AVG':'ERA';
+  renderHistory();
+}
+function renderHistory() {
+  const [pid,type]=document.getElementById('hist-player').value.split('|');
+  const stat=document.getElementById('hist-stat').value;
+  const history=type==='batting'?batHistory:pitHistory;
+  const empty=document.getElementById('history-empty');
+  const chartBox=document.querySelector('#panel-history .chart-box');
+  const rows=history.filter(r=>r.PlayerID===pid&&r[stat]!==''&&r[stat]!=='0')
+    .sort((a,b)=>a.Last_Updated.localeCompare(b.Last_Updated));
+  if (rows.length<2) { chartBox.style.display='none'; empty.style.display=''; return; }
+  chartBox.style.display=''; empty.style.display='none';
+  if (histChart) histChart.destroy();
+  histChart=new Chart(document.getElementById('hist-chart'),{
+    type:'line',
+    data:{labels:rows.map(r=>r.Last_Updated.split(' ')[0]),datasets:[{
+      label:`${rows[0].Name} — ${LABELS[stat]||stat}`,
+      data:rows.map(r=>parseFloat(r[stat])||0),
+      borderColor:'#1a7a3c',backgroundColor:'rgba(26,122,60,0.15)',
+      pointBackgroundColor:'#f0b429',pointRadius:5,pointHoverRadius:7,tension:0.3,fill:true
+    }]},
+    options:{responsive:true,
+      plugins:{legend:{labels:{color:'#e8edf2',font:{size:13}}},
+        tooltip:{backgroundColor:'#162230',borderColor:'#1e3448',borderWidth:1,titleColor:'#f0b429',bodyColor:'#e8edf2'}},
+      scales:{x:{ticks:{color:'#7a8fa6',maxRotation:45},grid:{color:'#1e3448'}},
+              y:{ticks:{color:'#7a8fa6'},grid:{color:'#1e3448'}}}}
+  });
+}
+
+// ── PROFILE MODAL ─────────────────────────────────────────────────────────────
 function openProfile(pid, type) {
-  const data = type==='batting' ? batData : pitData;
-  const player = data.find(r=>r.PlayerID===pid);
-  if (!player) return;
-  const cols = type==='batting' ? BAT_COLS : PIT_COLS;
-  const history = type==='batting' ? batHistory : pitHistory;
-  const prev = getPrevRow(history, pid);
+  const data=type==='batting'?batData:pitData;
+  const player=data.find(r=>r.PlayerID===pid); if (!player) return;
+  const cols=type==='batting'?BAT_COLS:PIT_COLS;
+  const history=type==='batting'?batHistory:pitHistory;
+  const prev=getPrev(history,pid);
+  const streak=getStreak(history,pid,type);
 
-  document.getElementById('modal-name').textContent = player.Name || '';
-  document.getElementById('modal-sub').textContent  =
-    `${player.School || ''} · ${player.Division || ''} · ${type==='batting'?'Position Player':'Pitcher'}`;
+  document.getElementById('modal-name').textContent=`${player.Name||''}${streak>=3?' 🔥':''}`;
+  document.getElementById('modal-sub').textContent=`${player.School||''} · ${player.Division||''} · ${type==='batting'?'Position Player':'Pitcher'}`;
 
-  const statCells = cols.map(c => {
-    const hot   = isHot(c, player[c], type);
-    const arrow = trendArrow(c, player[c], prev);
+  // Stat grid
+  const statCells=cols.map(c=>{
+    const hot=isHot(c,player[c],type);
+    const arrow=trendArrow(c,player[c],prev);
     return `<div class="stat-cell ${hot?'hot':''}">
       <div class="stat-label">${LABELS[c]||c}</div>
       <div class="stat-value ${hot?'hot-val':''}">${player[c]||'—'}${arrow}</div>
     </div>`;
   }).join('');
 
-  // Check if there's history to show
-  const hasHistory = history.filter(r=>r.PlayerID===pid&&r[cols[0]]!=='').length >= 2;
-  const chartSection = hasHistory ? `
-    <div class="modal-section-title">Season Trend</div>
-    <div class="modal-chart-wrap">
-      <canvas id="modal-chart"></canvas>
-    </div>` : '';
+  // Season arc progress bars
+  const thresholds=type==='batting'?BAT_THRESHOLDS:PIT_THRESHOLDS;
+  const arcBars=Object.entries(thresholds).map(([col,target])=>{
+    const v=parseFloat(player[col])||0;
+    const pct=LOWER_IS_BETTER.has(col)
+      ? Math.min(100,v>0?Math.round((target/v)*100):0)
+      : Math.min(100,Math.round((v/target)*100));
+    const over=pct>=100;
+    return `<div class="arc-bar-wrap">
+      <div class="arc-label"><span>${LABELS[col]||col}: ${player[col]||'0'}</span><span>Target: ${target}</span></div>
+      <div class="arc-track"><div class="arc-fill ${over?'over':''}" style="width:${pct}%"></div></div>
+    </div>`;
+  }).join('');
 
-  document.getElementById('modal-body').innerHTML = `
-    <div class="modal-section-title">Stats</div>
+  // Radar data — percentile vs group
+  const radarCols = type==='batting'
+    ? ['AVG','OBP','SLG','ISO','BB_pct','K_pct']
+    : ['K_per_9','K_BB','ERA','WHIP','xFIP','BB_pct'];
+  const radarLabels=radarCols.map(c=>LABELS[c]||c);
+  const radarData=radarCols.map(c=>{
+    const allVals=data.map(r=>parseFloat(r[c])||0);
+    return getPercentile(player[c],allVals,LOWER_IS_BETTER.has(c));
+  });
+
+  const hasHistory=history.filter(r=>r.PlayerID===pid&&parseFloat(r[cols[0]])>0).length>=2;
+  const defaultStat=type==='batting'?'AVG':'ERA';
+  const histRows=history.filter(r=>r.PlayerID===pid&&r[defaultStat]!==''&&r[defaultStat]!=='0')
+    .sort((a,b)=>a.Last_Updated.localeCompare(b.Last_Updated));
+
+  document.getElementById('modal-body').innerHTML=`
+    <div class="modal-section-title">Season Stats</div>
     <div class="stat-grid">${statCells}</div>
-    ${chartSection}`;
+    <div class="modal-section-title">Progress Toward Targets</div>
+    ${arcBars}
+    <div class="modal-2col">
+      <div>
+        <div class="modal-section-title">Percentile Ranking (vs Group)</div>
+        <div class="modal-chart-wrap"><canvas id="modal-radar"></canvas></div>
+      </div>
+      ${hasHistory?`<div>
+        <div class="modal-section-title">${LABELS[defaultStat]||defaultStat} Trend</div>
+        <div class="modal-chart-wrap"><canvas id="modal-chart"></canvas></div>
+      </div>`:''}
+    </div>`;
 
   document.getElementById('modal-overlay').classList.add('open');
 
-  if (hasHistory) {
-    const defaultStat = type==='batting' ? 'AVG' : 'ERA';
-    if (modalChart) { modalChart.destroy(); modalChart=null; }
-    setTimeout(() => {
-      modalChart = new Chart(document.getElementById('modal-chart'), {
+  // Destroy previous charts
+  if (modalRadar) { modalRadar.destroy(); modalRadar=null; }
+  if (modalChart) { modalChart.destroy(); modalChart=null; }
+
+  setTimeout(()=>{
+    modalRadar=new Chart(document.getElementById('modal-radar'),{
+      type:'radar',
+      data:{labels:radarLabels,datasets:[{
+        label:'Percentile vs Group',data:radarData,
+        backgroundColor:'rgba(26,122,60,0.2)',borderColor:'#1a7a3c',
+        pointBackgroundColor:'#f0b429',pointRadius:4,
+      }]},
+      options:{responsive:true,scales:{r:{
+        min:0,max:100,ticks:{display:false,stepSize:25},
+        grid:{color:'#1e3448'},angleLines:{color:'#1e3448'},
+        pointLabels:{color:'#e8edf2',font:{size:11}}
+      }},plugins:{legend:{labels:{color:'#e8edf2',font:{size:11}}}}}
+    });
+
+    if (hasHistory) {
+      modalChart=new Chart(document.getElementById('modal-chart'),{
         type:'line',
-        data:{
-          labels: history.filter(r=>r.PlayerID===pid&&r[defaultStat]!==''&&r[defaultStat]!=='0')
-                         .sort((a,b)=>a.Last_Updated.localeCompare(b.Last_Updated))
-                         .map(r=>r.Last_Updated.split(' ')[0]),
-          datasets:[{
-            label: `${player.Name} — ${LABELS[defaultStat]||defaultStat}`,
-            data: history.filter(r=>r.PlayerID===pid&&r[defaultStat]!==''&&r[defaultStat]!=='0')
-                         .sort((a,b)=>a.Last_Updated.localeCompare(b.Last_Updated))
-                         .map(r=>parseFloat(r[defaultStat])||0),
-            borderColor:'#1a7a3c', backgroundColor:'rgba(26,122,60,0.15)',
-            pointBackgroundColor:'#f0b429', pointRadius:4, tension:0.3, fill:true
-          }]
-        },
-        options:{
-          responsive:true,
-          plugins:{
-            legend:{labels:{color:'#e8edf2',font:{size:12}}},
-            tooltip:{backgroundColor:'#162230',borderColor:'#1e3448',borderWidth:1,titleColor:'#f0b429',bodyColor:'#e8edf2'}
-          },
-          scales:{
-            x:{ticks:{color:'#7a8fa6',maxRotation:45},grid:{color:'#1e3448'}},
-            y:{ticks:{color:'#7a8fa6'},grid:{color:'#1e3448'}}
-          }
-        }
+        data:{labels:histRows.map(r=>r.Last_Updated.split(' ')[0]),datasets:[{
+          label:`${LABELS[defaultStat]||defaultStat}`,
+          data:histRows.map(r=>parseFloat(r[defaultStat])||0),
+          borderColor:'#1a7a3c',backgroundColor:'rgba(26,122,60,0.15)',
+          pointBackgroundColor:'#f0b429',pointRadius:4,tension:0.3,fill:true
+        }]},
+        options:{responsive:true,
+          plugins:{legend:{labels:{color:'#e8edf2',font:{size:11}}},
+            tooltip:{backgroundColor:'#162230',borderColor:'#1e3448',borderWidth:1,titleColor:'#f0b429',bodyColor:'#e8edf2'}},
+          scales:{x:{ticks:{color:'#7a8fa6',maxRotation:45},grid:{color:'#1e3448'}},
+                  y:{ticks:{color:'#7a8fa6'},grid:{color:'#1e3448'}}}}
       });
-    }, 50);
-  }
+    }
+  },50);
 }
 function closeProfileModal() {
   document.getElementById('modal-overlay').classList.remove('open');
-  if (modalChart) { modalChart.destroy(); modalChart=null; }
+  if (modalRadar){modalRadar.destroy();modalRadar=null;}
+  if (modalChart){modalChart.destroy();modalChart=null;}
 }
-function closeModal(e) {
-  if (e.target===document.getElementById('modal-overlay')) closeProfileModal();
-}
+function closeModal(e) { if(e.target===document.getElementById('modal-overlay'))closeProfileModal(); }
 
 init();
 </script>
