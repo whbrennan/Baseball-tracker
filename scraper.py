@@ -7,8 +7,10 @@ from playwright.sync_api import sync_playwright
 from datetime import datetime
 
 # ── CONFIG ───────────────────────────────────────────────────────────────────
-SPREADSHEET_ID    = os.environ.get("SPREADSHEET_ID")
-GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDENTIALS")
+SPREADSHEET_ID      = os.environ.get("SPREADSHEET_ID")
+GOOGLE_CREDS_JSON   = os.environ.get("GOOGLE_CREDENTIALS")
+PUSHOVER_USER       = os.environ.get("PUSHOVER_USER_KEY")
+PUSHOVER_TOKEN      = os.environ.get("PUSHOVER_API_TOKEN")
 
 BATTING_MAP = {
     "GP-GS"  : ("G", "GS"),
@@ -182,6 +184,7 @@ def scrape(page, player, stat_type):
 
 # ── SHEET WRITING ──────────────────────────────────────────────────────────────
 def write_stats(sheet, tab, player, mapped, target_cols):
+    """Update current stats row. Returns previous row for comparison."""
     ws  = sheet.worksheet(tab)
     pid = player["PlayerID"]
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -192,9 +195,10 @@ def write_stats(sheet, tab, player, mapped, target_cols):
         if r.get("PlayerID") == pid:
             ws.update(values=[row], range_name=f"A{i+2}")
             print(f"    ✓ {tab} updated")
-            return
+            return r          # return old row for comparison
     ws.append_row(row)
     print(f"    ✓ {tab} added")
+    return None               # no previous row
 
 def write_history(sheet, tab, player, mapped, target_cols):
     ws  = sheet.worksheet(tab)
@@ -238,13 +242,34 @@ def main(test_player_id=None):
                         ("batting", "Batting", "Batting_History", BATTING_COLS),
                         ("defense", "Defense", "Defense_History", DEFENSE_COLS),
                     ]:
-                        s = scrape(page, player, st)
-                        write_stats(sheet, tab, player, s, cols)
+                        s        = scrape(page, player, st)
+                        old_row  = write_stats(sheet, tab, player, s, cols)
                         write_history(sheet, hist, player, s, cols)
+                        if st == "batting":
+                            # First appearance
+                            if old_row and is_zero_row(old_row, BATTING_COLS) and not is_zero_row(s, BATTING_COLS):
+                                push(
+                                    f"⚾ {player['Name']} has arrived!",
+                                    f"{player['School']} ({player['Division']})\n"
+                                    f"AVG: {s.get('AVG','—')}  OPS: {s.get('OPS','—')}  H: {s.get('H','—')}",
+                                    priority=1
+                                )
+                            # Threshold check
+                            check_thresholds(player, s, old_row, "batting")
                 else:
-                    s = scrape(page, player, "pitching")
-                    write_stats(sheet, "Pitching", player, s, PITCHING_COLS)
+                    s       = scrape(page, player, "pitching")
+                    old_row = write_stats(sheet, "Pitching", player, s, PITCHING_COLS)
                     write_history(sheet, "Pitching_History", player, s, PITCHING_COLS)
+                    # First appearance
+                    if old_row and is_zero_row(old_row, PITCHING_COLS) and not is_zero_row(s, PITCHING_COLS):
+                        push(
+                            f"🥎 {player['Name']} has arrived!",
+                            f"{player['School']} ({player['Division']})\n"
+                            f"ERA: {s.get('ERA','—')}  IP: {s.get('IP','—')}  K: {s.get('SO','—')}",
+                            priority=1
+                        )
+                    # Threshold check
+                    check_thresholds(player, s, old_row, "pitching")
                 log(sheet, player, "SUCCESS")
             except Exception as e:
                 print(f"    ✗ ERROR: {e}")
