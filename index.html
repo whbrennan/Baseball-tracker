@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>College Baseball Tracker 2026</title>
+<style>
+  :root {
+    --green:  #1a7a3c;
+    --dkgreen:#135c2d;
+    --gold:   #f0b429;
+    --dark:   #0f1923;
+    --card:   #162230;
+    --border: #1e3448;
+    --text:   #e8edf2;
+    --muted:  #7a8fa6;
+    --red:    #e03c3c;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--dark); color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    min-height: 100vh;
+  }
+
+  /* ── HEADER ── */
+  header {
+    background: linear-gradient(135deg, var(--dkgreen) 0%, var(--dark) 100%);
+    border-bottom: 3px solid var(--gold);
+    padding: 18px 20px 14px;
+    text-align: center;
+  }
+  header h1 {
+    font-size: clamp(1.2rem, 4vw, 2rem);
+    font-weight: 800;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: #fff;
+  }
+  header h1 span { color: var(--gold); }
+  #last-updated {
+    font-size: .75rem; color: var(--muted); margin-top: 4px;
+  }
+
+  /* ── TABS ── */
+  nav {
+    display: flex; gap: 4px;
+    padding: 12px 16px 0;
+    border-bottom: 2px solid var(--border);
+    overflow-x: auto;
+  }
+  nav button {
+    background: none; border: none; cursor: pointer;
+    color: var(--muted); font-size: .85rem; font-weight: 600;
+    padding: 8px 18px; border-radius: 6px 6px 0 0;
+    text-transform: uppercase; letter-spacing: .5px;
+    white-space: nowrap; transition: all .15s;
+  }
+  nav button:hover  { background: var(--border); color: var(--text); }
+  nav button.active { background: var(--green);  color: #fff; }
+
+  /* ── CONTROLS ── */
+  .controls {
+    display: flex; flex-wrap: wrap; gap: 10px;
+    padding: 14px 16px;
+    align-items: center;
+  }
+  .controls label { font-size: .8rem; color: var(--muted); margin-right: 4px; }
+  select, .search-box {
+    background: var(--card); border: 1px solid var(--border);
+    color: var(--text); border-radius: 6px;
+    padding: 6px 10px; font-size: .85rem;
+  }
+  .search-box { min-width: 160px; }
+  select:focus, .search-box:focus { outline: 2px solid var(--green); }
+
+  /* ── TABLE ── */
+  .table-wrap { overflow-x: auto; padding: 0 16px 24px; }
+  table {
+    width: 100%; border-collapse: collapse;
+    font-size: .82rem; min-width: 600px;
+  }
+  thead tr {
+    background: var(--green);
+    text-transform: uppercase; font-size: .72rem; letter-spacing: .5px;
+  }
+  th {
+    padding: 9px 10px; text-align: center;
+    cursor: pointer; user-select: none; white-space: nowrap;
+    position: relative;
+  }
+  th:first-child, th:nth-child(2), th:nth-child(3) { text-align: left; }
+  th.sorted-asc::after  { content: ' ▲'; font-size: .65rem; }
+  th.sorted-desc::after { content: ' ▼'; font-size: .65rem; }
+  th:hover { background: var(--dkgreen); }
+
+  tbody tr { border-bottom: 1px solid var(--border); transition: background .1s; }
+  tbody tr:hover { background: var(--card); }
+  td {
+    padding: 8px 10px; text-align: center;
+    white-space: nowrap;
+  }
+  td:first-child, td:nth-child(2), td:nth-child(3) { text-align: left; }
+  td:first-child { font-weight: 700; color: var(--gold); }
+
+  .div-badge {
+    display: inline-block; padding: 2px 7px; border-radius: 4px;
+    font-size: .68rem; font-weight: 700; letter-spacing: .3px;
+  }
+  .D1    { background: #1a4a7a; color: #7ec8f7; }
+  .D2    { background: #3a2a6a; color: #b89af7; }
+  .D3    { background: #1a4a2a; color: #7af7a0; }
+  .NJCAA { background: #6a3a1a; color: #f7c07a; }
+
+  /* ── LEADERBOARD ── */
+  #lb-controls {
+    display: flex; flex-wrap: wrap; gap: 10px;
+    padding: 14px 16px;
+  }
+  .lb-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; overflow: hidden;
+    margin: 0 16px 20px;
+  }
+  .lb-title {
+    background: var(--green); padding: 10px 16px;
+    font-size: .8rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .5px;
+    color: #fff;
+  }
+  .lb-row {
+    display: flex; align-items: center;
+    padding: 10px 16px; border-bottom: 1px solid var(--border);
+    gap: 12px;
+  }
+  .lb-row:last-child { border-bottom: none; }
+  .lb-rank {
+    width: 28px; height: 28px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: .85rem; flex-shrink: 0;
+  }
+  .rank-1 { background: var(--gold);  color: #000; }
+  .rank-2 { background: #b0bec5;      color: #000; }
+  .rank-3 { background: #bf8a52;      color: #fff; }
+  .rank-n { background: var(--border); color: var(--muted); }
+  .lb-name { font-weight: 600; flex: 1; font-size: .9rem; }
+  .lb-school { font-size: .72rem; color: var(--muted); }
+  .lb-val {
+    font-size: 1.1rem; font-weight: 800; color: var(--gold);
+    min-width: 54px; text-align: right;
+  }
+
+  /* ── LOADING / ERROR ── */
+  .status {
+    text-align: center; padding: 40px 20px;
+    color: var(--muted); font-size: .9rem;
+  }
+  .spinner {
+    display: inline-block; width: 28px; height: 28px;
+    border: 3px solid var(--border); border-top-color: var(--green);
+    border-radius: 50%; animation: spin .7s linear infinite;
+    margin-bottom: 10px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── SECTION HEADERS ── */
+  .section-label {
+    padding: 6px 16px 2px;
+    font-size: .7rem; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 1px;
+  }
+  .panel { display: none; }
+  .panel.active { display: block; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>College Baseball <span>Tracker</span> 2026</h1>
+  <div id="last-updated">Loading stats…</div>
+</header>
+
+<nav>
+  <button class="active" onclick="showPanel('batting')">⚾ Batting</button>
+  <button onclick="showPanel('pitching')">🥎 Pitching</button>
+  <button onclick="showPanel('leaderboard')">🏆 Leaderboard</button>
+</nav>
+
+<!-- BATTING PANEL -->
+<div id="panel-batting" class="panel active">
+  <div class="controls">
+    <div>
+      <label>Division</label>
+      <select id="bat-div" onchange="renderBatting()">
+        <option value="ALL">All</option>
+        <option value="D1">D1</option>
+        <option value="D2">D2</option>
+        <option value="D3">D3</option>
+        <option value="NJCAA">NJCAA</option>
+      </select>
+    </div>
+    <div>
+      <label>Search</label>
+      <input class="search-box" id="bat-search" placeholder="Player or school…"
+             oninput="renderBatting()"/>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <div id="bat-status" class="status">
+      <div class="spinner"></div><br>Loading batting stats…
+    </div>
+    <table id="bat-table" style="display:none">
+      <thead>
+        <tr id="bat-head"></tr>
+      </thead>
+      <tbody id="bat-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- PITCHING PANEL -->
+<div id="panel-pitching" class="panel">
+  <div class="controls">
+    <div>
+      <label>Division</label>
+      <select id="pit-div" onchange="renderPitching()">
+        <option value="ALL">All</option>
+        <option value="D1">D1</option>
+        <option value="D2">D2</option>
+        <option value="D3">D3</option>
+        <option value="NJCAA">NJCAA</option>
+      </select>
+    </div>
+    <div>
+      <label>Search</label>
+      <input class="search-box" id="pit-search" placeholder="Player or school…"
+             oninput="renderPitching()"/>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <div id="pit-status" class="status">
+      <div class="spinner"></div><br>Loading pitching stats…
+    </div>
+    <table id="pit-table" style="display:none">
+      <thead>
+        <tr id="pit-head"></tr>
+      </thead>
+      <tbody id="pit-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- LEADERBOARD PANEL -->
+<div id="panel-leaderboard" class="panel">
+  <div id="lb-controls">
+    <div>
+      <label>Category</label>
+      <select id="lb-cat" onchange="renderLeaderboard()">
+        <option value="batting">Batting</option>
+        <option value="pitching">Pitching</option>
+      </select>
+    </div>
+    <div>
+      <label>Stat</label>
+      <select id="lb-stat" onchange="renderLeaderboard()"></select>
+    </div>
+    <div>
+      <label>Division</label>
+      <select id="lb-div" onchange="renderLeaderboard()">
+        <option value="ALL">All</option>
+        <option value="D1">D1</option>
+        <option value="D2">D2</option>
+        <option value="D3">D3</option>
+        <option value="NJCAA">NJCAA</option>
+      </select>
+    </div>
+  </div>
+  <div id="lb-content" class="status">
+    <div class="spinner"></div><br>Loading leaderboard…
+  </div>
+</div>
+
+<script>
+// ── CONFIG ────────────────────────────────────────────────────────────────────
+const SPREADSHEET_ID = '1vZ9retMliQq99hw2twZ-KtlvLKLOStkcHq73CAx94gs';
+
+// Stats where LOWER is better (for correct leaderboard sort)
+const LOWER_IS_BETTER = new Set(['ERA','WHIP','BB_per_9','SO','E','BB']);
+
+// Friendly display names for column headers
+const LABELS = {
+  G:'G', GS:'GS', AB:'AB', R:'R', H:'H', '2B':'2B', '3B':'3B',
+  HR:'HR', RBI:'RBI', BB:'BB', SO:'SO', HBP:'HBP', SAC:'SAC',
+  SF:'SF', SB:'SB', CS:'CS', AVG:'AVG', OBP:'OBP', SLG:'SLG', OPS:'OPS',
+  W:'W', L:'L', SV:'SV', IP:'IP', ER:'ER', ERA:'ERA', WHIP:'WHIP',
+  K_per_9:'K/9', BB_per_9:'BB/9'
+};
+
+// Batting and pitching stat columns to display (in order)
+const BAT_COLS = ['G','AB','R','H','2B','3B','HR','RBI','BB','SO','AVG','OBP','SLG','OPS'];
+const PIT_COLS = ['G','GS','W','L','SV','IP','H','ER','BB','SO','ERA','WHIP','K_per_9','BB_per_9'];
+
+// ── STATE ─────────────────────────────────────────────────────────────────────
+let batData = [], pitData = [];
+let batSort = { col: 'OPS', dir: -1 };
+let pitSort = { col: 'ERA', dir:  1 };
+
+// ── CSV FETCH ─────────────────────────────────────────────────────────────────
+function csvUrl(sheet) {
+  return `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet=${sheet}`;
+}
+
+function parseCsv(text) {
+  const lines = text.trim().split('\n');
+  const hdrs  = lines[0].split(',').map(h => h.replace(/^"|"$/g,'').trim());
+  return lines.slice(1).map(line => {
+    const vals = line.match(/(".*?"|[^,]+|(?<=,)(?=,)|^(?=,)|(?<=,)$)/g) || [];
+    const obj  = {};
+    hdrs.forEach((h, i) => {
+      obj[h] = (vals[i] || '').replace(/^"|"$/g,'').trim();
+    });
+    return obj;
+  });
+}
+
+async function fetchSheet(name) {
+  const r = await fetch(csvUrl(name));
+  if (!r.ok) throw new Error(`Failed to fetch ${name}`);
+  return parseCsv(await r.text());
+}
+
+// ── INIT ──────────────────────────────────────────────────────────────────────
+async function init() {
+  try {
+    [batData, pitData] = await Promise.all([
+      fetchSheet('Batting'),
+      fetchSheet('Pitching')
+    ]);
+    // Set last-updated from most recent timestamp
+    const ts = [...batData, ...pitData]
+      .map(r => r.Last_Updated).filter(Boolean).sort().pop();
+    document.getElementById('last-updated').textContent =
+      ts ? `Last updated: ${ts}` : 'Stats loaded';
+
+    renderBatting();
+    renderPitching();
+    populateLbStats();
+    renderLeaderboard();
+  } catch(e) {
+    document.querySelectorAll('.status').forEach(el => {
+      el.innerHTML = `⚠️ Could not load stats.<br><small>${e.message}</small>`;
+    });
+  }
+}
+
+// ── PANEL SWITCHING ───────────────────────────────────────────────────────────
+function showPanel(name) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById(`panel-${name}`).classList.add('active');
+  event.currentTarget.classList.add('active');
+}
+
+// ── FILTERING ─────────────────────────────────────────────────────────────────
+function filterRows(data, divId, searchId) {
+  const div = document.getElementById(divId).value;
+  const q   = document.getElementById(searchId).value.toLowerCase();
+  return data.filter(r => {
+    const divOk  = div === 'ALL' || r.Division === div;
+    const srchOk = !q ||
+      (r.Name   || '').toLowerCase().includes(q) ||
+      (r.School || '').toLowerCase().includes(q);
+    return divOk && srchOk;
+  });
+}
+
+// ── SORT ──────────────────────────────────────────────────────────────────────
+function sortRows(rows, col, dir) {
+  return [...rows].sort((a, b) => {
+    const av = parseFloat(a[col]) || 0;
+    const bv = parseFloat(b[col]) || 0;
+    return (bv - av) * dir;
+  });
+}
+
+function setSort(state, col) {
+  if (state.col === col) state.dir *= -1;
+  else { state.col = col; state.dir = LOWER_IS_BETTER.has(col) ? 1 : -1; }
+}
+
+// ── BUILD TABLE ───────────────────────────────────────────────────────────────
+function buildTable(rows, cols, sortState, headId, bodyId, statusId, tableId, onSort) {
+  const status = document.getElementById(statusId);
+  const table  = document.getElementById(tableId);
+
+  if (!rows.length) {
+    status.textContent = 'No players match the current filter.';
+    status.style.display = '';
+    table.style.display = 'none';
+    return;
+  }
+  status.style.display = 'none';
+  table.style.display  = '';
+
+  // Headers
+  const head = document.getElementById(headId);
+  head.innerHTML = '<th onclick="' + onSort + '(\'Name\')">Player</th>' +
+    '<th onclick="' + onSort + '(\'School\')">School</th>' +
+    '<th>Div</th>' +
+    cols.map(c =>
+      `<th onclick="${onSort}('${c}')" class="${sortState.col===c ? (sortState.dir===-1?'sorted-desc':'sorted-asc') : ''}">${LABELS[c]||c}</th>`
+    ).join('');
+
+  // Rows
+  document.getElementById(bodyId).innerHTML = sortRows(rows, sortState.col, sortState.dir)
+    .map(r =>
+      `<tr>
+        <td>${r.Name || ''}</td>
+        <td style="font-size:.78rem;color:var(--muted)">${(r.School||'').replace('University','Univ.').replace('College','Col.')}</td>
+        <td><span class="div-badge ${r.Division||''}">${r.Division||''}</span></td>
+        ${cols.map(c => `<td>${r[c]||'—'}</td>`).join('')}
+      </tr>`
+    ).join('');
+}
+
+// ── BATTING ───────────────────────────────────────────────────────────────────
+function renderBatting() {
+  const rows = filterRows(batData, 'bat-div', 'bat-search');
+  buildTable(rows, BAT_COLS, batSort, 'bat-head', 'bat-body',
+             'bat-status', 'bat-table', 'sortBat');
+}
+function sortBat(col) {
+  setSort(batSort, col);
+  renderBatting();
+}
+
+// ── PITCHING ──────────────────────────────────────────────────────────────────
+function renderPitching() {
+  const rows = filterRows(pitData, 'pit-div', 'pit-search');
+  buildTable(rows, PIT_COLS, pitSort, 'pit-head', 'pit-body',
+             'pit-status', 'pit-table', 'sortPit');
+}
+function sortPit(col) {
+  setSort(pitSort, col);
+  renderPitching();
+}
+
+// ── LEADERBOARD ───────────────────────────────────────────────────────────────
+function populateLbStats() {
+  const catEl  = document.getElementById('lb-cat');
+  const statEl = document.getElementById('lb-stat');
+  function update() {
+    const cols = catEl.value === 'batting' ? BAT_COLS : PIT_COLS;
+    statEl.innerHTML = cols.map(c =>
+      `<option value="${c}">${LABELS[c]||c}</option>`
+    ).join('');
+    // Default to OPS for batting, ERA for pitching
+    statEl.value = catEl.value === 'batting' ? 'OPS' : 'ERA';
+  }
+  catEl.addEventListener('change', update);
+  update();
+}
+
+function renderLeaderboard() {
+  const cat  = document.getElementById('lb-cat').value;
+  const stat = document.getElementById('lb-stat').value;
+  const div  = document.getElementById('lb-div').value;
+  const data = cat === 'batting' ? batData : pitData;
+  const el   = document.getElementById('lb-content');
+
+  let rows = data.filter(r => {
+    const divOk = div === 'ALL' || r.Division === div;
+    const hasVal = parseFloat(r[stat]) > 0;
+    return divOk && hasVal;
+  });
+
+  const asc = LOWER_IS_BETTER.has(stat);
+  rows = rows.sort((a, b) => {
+    const av = parseFloat(a[stat]) || 0;
+    const bv = parseFloat(b[stat]) || 0;
+    return asc ? av - bv : bv - av;
+  }).slice(0, 10);
+
+  if (!rows.length) {
+    el.innerHTML = '<div class="status">No data available yet for this stat.</div>';
+    return;
+  }
+
+  el.innerHTML = `
+    <div class="lb-card">
+      <div class="lb-title">${LABELS[stat]||stat} Leaders ${div !== 'ALL' ? '— '+div : ''}</div>
+      ${rows.map((r, i) => `
+        <div class="lb-row">
+          <div class="lb-rank ${i===0?'rank-1':i===1?'rank-2':i===2?'rank-3':'rank-n'}">${i+1}</div>
+          <div>
+            <div class="lb-name">${r.Name||''}</div>
+            <div class="lb-school">${r.School||''} &nbsp;
+              <span class="div-badge ${r.Division||''}">${r.Division||''}</span>
+            </div>
+          </div>
+          <div class="lb-val">${r[stat]||'—'}</div>
+        </div>`
+      ).join('')}
+    </div>`;
+}
+
+init();
+</script>
+</body>
+</html>
