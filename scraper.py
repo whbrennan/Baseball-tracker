@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import gspread
 from google.oauth2.service_account import Credentials
 from playwright.sync_api import sync_playwright
@@ -11,7 +12,7 @@ GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDENTIALS")
 
 # Map Sidearm column names → our Google Sheet column names
 BATTING_MAP = {
-    "GP-GS"  : ("G", "GS"),   # split combined field e.g. "7-7"
+    "GP-GS"  : ("G", "GS"),
     "AB"     : "AB",
     "R"      : "R",
     "H"      : "H",
@@ -22,18 +23,18 @@ BATTING_MAP = {
     "BB"     : "BB",
     "SO"     : "SO",
     "HBP"    : "HBP",
-    "SH"     : "SAC",          # Sidearm calls it SH
+    "SH"     : "SAC",
     "SF"     : "SF",
-    "SB-ATT" : ("SB", "CS"),   # split combined field e.g. "4-4"
+    "SB-ATT" : ("SB", "CS"),
     "AVG"    : "AVG",
-    "OB%"    : "OBP",          # Sidearm calls it OB%
-    "SLG%"   : "SLG",          # Sidearm calls it SLG%
+    "OB%"    : "OBP",
+    "SLG%"   : "SLG",
     "OPS"    : "OPS",
 }
 
 PITCHING_MAP = {
-    "APP-GS" : ("G", "GS"),    # split combined field
-    "W-L"    : ("W", "L"),     # split combined field
+    "APP-GS" : ("G", "GS"),
+    "W-L"    : ("W", "L"),
     "SV"     : "SV",
     "IP"     : "IP",
     "H"      : "H",
@@ -46,15 +47,22 @@ PITCHING_MAP = {
     "WHIP"   : "WHIP",
 }
 
-# Defense table has no GP-GS column — G/GS omitted intentionally
+# Defense has no GP-GS column
 DEFENSE_MAP = {
-    "C"    : "TC",             # Sidearm calls total chances "C"
+    "C"    : "TC",
     "PO"   : "PO",
     "A"    : "A",
     "E"    : "E",
     "FLD%" : "FLD%",
     "DP"   : "DP",
 }
+
+# ── COLUMN LISTS (must match Google Sheet headers exactly) ────────────────────
+BATTING_COLS  = ["G","GS","AB","R","H","2B","3B","HR","RBI","BB","SO",
+                 "HBP","SAC","SF","SB","CS","AVG","OBP","SLG","OPS"]
+PITCHING_COLS = ["G","GS","W","L","SV","IP","H","R","ER","BB","SO",
+                 "HBP","ERA","WHIP","K_per_9","BB_per_9","K_BB","xFIP"]
+DEFENSE_COLS  = ["TC","PO","A","E","FLD%","DP"]
 
 # ── GOOGLE SHEETS ─────────────────────────────────────────────────────────────
 def connect():
@@ -70,59 +78,65 @@ def get_players(sheet):
 
 # ── STAT PARSING ──────────────────────────────────────────────────────────────
 def split_combined(value, sep="-"):
-    """Split a combined stat like '7-7' or '4-4' into two values."""
     parts = value.split(sep, 1)
     if len(parts) > 1:
         return parts[0].strip(), parts[1].strip()
     return "", ""
 
 def align_headers(hdrs, cells):
-    """
-    Sidearm includes a 'Player' column in the header row that has
-    no corresponding data cell (it renders as a link/image only).
-    If headers outnumber cells by 1, drop the 'Player' header to realign.
-    """
+    """Drop the 'Player' header if it has no matching data cell."""
     if "Player" in hdrs and len(hdrs) == len(cells) + 1:
         hdrs = [h for h in hdrs if h != "Player"]
     return hdrs
 
 def map_row(raw, col_map):
-    """
-    Convert a raw {sidearm_header: value} dict into our sheet column names,
-    handling combined fields like GP-GS → G, GS.
-    """
     out = {}
     for src_col, dest in col_map.items():
         val = raw.get(src_col, "")
-        if isinstance(dest, tuple):          # combined field — split it
+        if isinstance(dest, tuple):
             v1, v2 = split_combined(val)
             out[dest[0]] = v1
             out[dest[1]] = v2
         else:
             out[dest] = val
 
-    # Compute derived stats if missing
+    # Computed batting
     if not out.get("OPS"):
         try:
             out["OPS"] = f"{float(out.get('OBP','0')) + float(out.get('SLG','0')):.3f}"
         except Exception:
             pass
+
+    # Computed pitching
     try:
-        ip = float(out.get("IP", 0))
-        bb = float(out.get("BB", 0))
-        so = float(out.get("SO", 0))
+        ip  = float(out.get("IP", 0))
+        bb  = float(out.get("BB", 0))
+        so  = float(out.get("SO", 0))
+        hbp = float(out.get("HBP", 0))
         if ip > 0:
             out["K_per_9"]  = f"{(so / ip * 9):.2f}"
             out["BB_per_9"] = f"{(bb / ip * 9):.2f}"
+            out["K_BB"]     = f"{(so / bb):.2f}" if bb > 0 else "—"
+            x_hr  = ip * (1.0 / 9)
+            xfip  = ((13 * x_hr) + (3 * (bb + hbp)) - (2 * so)) / ip + 3.10
+            out["xFIP"] = f"{xfip:.2f}"
     except Exception:
         pass
+
+    return out
+
+def zero_stats(col_map):
+    out = {}
+    for dest in col_map.values():
+        if isinstance(dest, tuple):
+            out[dest[0]] = "0"
+            out[dest[1]] = "0"
+        else:
+            out[dest] = "0"
     return out
 
 # ── SCRAPING ──────────────────────────────────────────────────────────────────
 def find_table(page, stat_type):
-    """
-    Return the correct stats table based on stat_type by checking headers.
-    """
     for table in page.query_selector_all("table"):
         rows = table.query_selector_all("tr")
         if len(rows) < 2:
@@ -134,35 +148,18 @@ def find_table(page, stat_type):
         if stat_type == "defense"  and "FLD%" in hdrs and "PO"   in hdrs: return table, hdrs
     return None, []
 
-def zero_stats(col_map):
-    """Return a dict of all zeros for every destination column in a map."""
-    out = {}
-    for dest in col_map.values():
-        if isinstance(dest, tuple):
-            out[dest[0]] = "0"
-            out[dest[1]] = "0"
-        else:
-            out[dest] = "0"
-    return out
-
 def scrape(page, player, stat_type):
-    """
-    Load the stats page and find the player's row by jersey number.
-    Returns a mapped dict of {our_column: value}, or all zeros if
-    the player or table isn't found (i.e. hasn't appeared yet).
-    """
     url    = player["Stats_URL"]
     jersey = str(player.get("Jersey", "")).strip()
 
     if not jersey:
-        print(f"    ⚠ No jersey number for {player['Name']} — cannot match row")
+        print(f"    ⚠ No jersey number for {player['Name']} — writing zeros")
         return zero_stats({"batting": BATTING_MAP,
                            "pitching": PITCHING_MAP,
                            "defense": DEFENSE_MAP}[stat_type])
 
-    import time
     page.goto(url, wait_until="domcontentloaded", timeout=60000)
-    time.sleep(5)  # let JS finish rendering after DOM loads
+    time.sleep(5)
 
     col_map = {"batting": BATTING_MAP,
                "pitching": PITCHING_MAP,
@@ -177,11 +174,8 @@ def scrape(page, player, stat_type):
         cells = [c.inner_text().strip() for c in row.query_selector_all("td")]
         if not cells:
             continue
-
         aligned_hdrs = align_headers(hdrs, cells)
-        row_jersey   = cells[0].strip()
-
-        if row_jersey == jersey:
+        if cells[0].strip() == jersey:
             raw = {aligned_hdrs[i]: cells[i]
                    for i in range(min(len(aligned_hdrs), len(cells)))}
             return map_row(raw, col_map)
@@ -191,6 +185,7 @@ def scrape(page, player, stat_type):
 
 # ── SHEET WRITING ──────────────────────────────────────────────────────────────
 def write_stats(sheet, tab, player, mapped, target_cols):
+    """Update the current-stats row for this player (one row per player)."""
     ws       = sheet.worksheet(tab)
     existing = ws.get_all_records()
     pid      = player["PlayerID"]
@@ -201,11 +196,21 @@ def write_stats(sheet, tab, player, mapped, target_cols):
 
     for i, row in enumerate(existing):
         if row.get("PlayerID") == pid:
-            ws.update(values=[new_row], range_name=f"A{i + 2}")  # fixed arg order
+            ws.update(values=[new_row], range_name=f"A{i + 2}")
             print(f"    ✓ {tab} updated")
             return
     ws.append_row(new_row)
     print(f"    ✓ {tab} added")
+
+def write_history(sheet, tab, player, mapped, target_cols):
+    """Always append a new snapshot row — never update existing rows."""
+    ws  = sheet.worksheet(tab)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    row = [now, player["PlayerID"], player["Name"],
+           player["School"], player["Division"]]
+    row += [str(mapped.get(col, "")) for col in target_cols]
+    ws.append_row(row)
+    print(f"    ✓ {tab} snapshot saved")
 
 def log(sheet, player, status, notes=""):
     sheet.worksheet("Scrape_Log").append_row([
@@ -213,13 +218,6 @@ def log(sheet, player, status, notes=""):
         player["PlayerID"], player["Name"],
         player["School"], status, notes
     ])
-
-# ── COLUMN LISTS (must match Google Sheet headers exactly) ────────────────────
-BATTING_COLS  = ["G","GS","AB","R","H","2B","3B","HR","RBI","BB","SO",
-                 "HBP","SAC","SF","SB","CS","AVG","OBP","SLG","OPS"]
-PITCHING_COLS = ["G","GS","W","L","SV","IP","H","R","ER","BB","SO",
-                 "HBP","ERA","WHIP","K_per_9","BB_per_9","K_BB","xFIP"]
-DEFENSE_COLS  = ["TC","PO","A","E","FLD%","DP"]
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 def main(test_player_id=None):
@@ -272,5 +270,4 @@ def main(test_player_id=None):
 
 # ── ENTRY POINT ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    # Change "P001" to any PlayerID. test_player_id="P001",  or use     main() to run all 18
-    main(test_player_id="P001")
+    main()
