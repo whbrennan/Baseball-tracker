@@ -1,0 +1,35 @@
+name: Scrape Schedules
+
+on:
+  schedule:
+    # Runs every 3 hours during baseball season (adjust as needed)
+    # Cron format: minute hour day month weekday
+    - cron: '0 */3 * * *'
+  workflow_dispatch:
+    # Also allows manual trigger from GitHub Actions tab
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4 gspread google-auth
+
+      - name: Run schedule scraper
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: |
+          python3 scrape_schedule.py
+
+      - name: Confirm completion
+        run: echo "Schedule scrape complete at $(date)"
