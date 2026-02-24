@@ -313,7 +313,7 @@
   </div>
 </div>
 // ── CONFIG ────────────────────────────────────────────────────────────────────
-const SPREADSHEET_ID = 1vZ9retMliQq99hw2twZ-KtlvLKLOStkcHq73CAx94gs;
+const SPREADSHEET_ID = '1vZ9retMliQq99hw2twZ-KtlvLKLOStkcHq73CAx94gs';
 
 // Stats where LOWER is better (for correct leaderboard sort)
 const LOWER_IS_BETTER = new Set(['ERA','WHIP','BB_per_9','SO','E','BB','xFIP']);
@@ -362,12 +362,20 @@ async function fetchSheet(name) {
 // ── INIT ──────────────────────────────────────────────────────────────────────
 async function init() {
   try {
-    [batData, pitData, batHistory, pitHistory] = await Promise.all([
+    [batData, pitData] = await Promise.all([
       fetchSheet('Batting'),
-      fetchSheet('Pitching'),
-      fetchSheet('Batting_History'),
-      fetchSheet('Pitching_History')
+      fetchSheet('Pitching')
     ]);
+
+    // History tabs may not exist yet — fail silently if missing
+    try {
+      [batHistory, pitHistory] = await Promise.all([
+        fetchSheet('Batting_History'),
+        fetchSheet('Pitching_History')
+      ]);
+    } catch(e) {
+      console.warn('History tabs not yet created — skipping history panel');
+    }
     // Set last-updated from most recent timestamp
     const ts = [...batData, ...pitData]
       .map(r => r.Last_Updated).filter(Boolean).sort().pop();
