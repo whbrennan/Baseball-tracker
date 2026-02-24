@@ -218,7 +218,7 @@ def log(sheet, player, status, notes=""):
 BATTING_COLS  = ["G","GS","AB","R","H","2B","3B","HR","RBI","BB","SO",
                  "HBP","SAC","SF","SB","CS","AVG","OBP","SLG","OPS"]
 PITCHING_COLS = ["G","GS","W","L","SV","IP","H","R","ER","BB","SO",
-                 "HBP","ERA","WHIP","K_per_9","BB_per_9"]
+                 "HBP","ERA","WHIP","K_per_9","BB_per_9","K_BB","xFIP"]
 DEFENSE_COLS  = ["TC","PO","A","E","FLD%","DP"]
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
@@ -270,5 +270,5 @@ def main(test_player_id=None):
 
 # ── ENTRY POINT ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    # Change "P001" to any PlayerID, or use     main(test_player_id="P017") to run all 18
+    # Change "P001" to any PlayerID, or use     main() to run all 18
     main()

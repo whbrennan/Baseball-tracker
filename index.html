@@ -282,10 +282,10 @@
 
 <script>
 // ── CONFIG ────────────────────────────────────────────────────────────────────
-const SPREADSHEET_ID = '1vZ9retMliQq99hw2twZ-KtlvLKLOStkcHq73CAx94gs';
+const SPREADSHEET_ID = 1vZ9retMliQq99hw2twZ-KtlvLKLOStkcHq73CAx94gs;
 
 // Stats where LOWER is better (for correct leaderboard sort)
-const LOWER_IS_BETTER = new Set(['ERA','WHIP','BB_per_9','SO','E','BB']);
+const LOWER_IS_BETTER = new Set(['ERA','WHIP','BB_per_9','SO','E','BB','xFIP']);
 
 // Friendly display names for column headers
 const LABELS = {
@@ -293,12 +293,12 @@ const LABELS = {
   HR:'HR', RBI:'RBI', BB:'BB', SO:'SO', HBP:'HBP', SAC:'SAC',
   SF:'SF', SB:'SB', CS:'CS', AVG:'AVG', OBP:'OBP', SLG:'SLG', OPS:'OPS',
   W:'W', L:'L', SV:'SV', IP:'IP', ER:'ER', ERA:'ERA', WHIP:'WHIP',
-  K_per_9:'K/9', BB_per_9:'BB/9'
+  K_per_9:'K/9', BB_per_9:'BB/9', K_BB:'K:BB', xFIP:'xFIP'
 };
 
 // Batting and pitching stat columns to display (in order)
 const BAT_COLS = ['G','AB','R','H','2B','3B','HR','RBI','BB','SO','AVG','OBP','SLG','OPS'];
-const PIT_COLS = ['G','GS','W','L','SV','IP','H','ER','BB','SO','ERA','WHIP','K_per_9','BB_per_9'];
+const PIT_COLS = ['G','GS','W','L','SV','IP','H','ER','BB','SO','ERA','WHIP','K_per_9','BB_per_9','K_BB','xFIP'];
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
 let batData = [], pitData = [];
