@@ -309,8 +309,12 @@ td:first-child,td:nth-child(2),td:nth-child(3){text-align:left;}
 
 <script>
 // ── DEBUG LOGGER ─────────────────────────────────────────────────────────────
+const DEBUG_MODE = new URLSearchParams(location.search).has('debug');
 let debugCount = 0;
 function dbg(msg, level='info') {
+  // Always log to browser console regardless of debug mode
+  console[level==='error'?'error':level==='warn'?'warn':'log'](`[${level.toUpperCase()}] ${msg.replace(/<[^>]+>/g,'')}`);
+  if (!DEBUG_MODE) return;
   debugCount++;
   const panel = document.getElementById('debug-panel');
   const log   = document.getElementById('debug-log');
