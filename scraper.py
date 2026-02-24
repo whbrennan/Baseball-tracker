@@ -1,16 +1,17 @@
 import os
 import json
 import time
+import requests
 import gspread
 from google.oauth2.service_account import Credentials
 from playwright.sync_api import sync_playwright
 from datetime import datetime
 
-# ── CONFIG ───────────────────────────────────────────────────────────────────
-SPREADSHEET_ID      = os.environ.get("SPREADSHEET_ID")
-GOOGLE_CREDS_JSON   = os.environ.get("GOOGLE_CREDENTIALS")
-PUSHOVER_USER       = os.environ.get("PUSHOVER_USER_KEY")
-PUSHOVER_TOKEN      = os.environ.get("PUSHOVER_API_TOKEN")
+# ── CONFIG ────────────────────────────────────────────────────────────────────
+SPREADSHEET_ID    = os.environ.get("SPREADSHEET_ID")
+GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDENTIALS")
+PUSHOVER_USER     = os.environ.get("PUSHOVER_USER_KEY")
+PUSHOVER_TOKEN    = os.environ.get("PUSHOVER_API_TOKEN")
 
 BATTING_MAP = {
     "GP-GS"  : ("G", "GS"),
@@ -32,8 +33,16 @@ PITCHING_MAP = {
 }
 
 DEFENSE_MAP = {
-    "C"    : "TC",  "PO"   : "PO",  "A" : "A",
-    "E"    : "E",   "FLD%" : "FLD%","DP" : "DP",
+    "C"    : "TC",
+    "PO"   : "PO",
+    "A"    : "A",
+    "E"    : "E",
+    "FLD%" : "FLD%",
+    "DP"   : "DP",
+    "SBA"  : "SBA",
+    "CSB"  : "CSB",
+    "PB"   : "PB",
+    "CI"   : "CI",
 }
 
 # ── COLUMN LISTS ──────────────────────────────────────────────────────────────
@@ -43,15 +52,84 @@ BATTING_COLS  = ["G","GS","AB","R","H","2B","3B","HR","RBI","BB","SO",
 PITCHING_COLS = ["G","GS","W","L","SV","IP","H","R","ER","BB","SO",
                  "HBP","ERA","WHIP","K_per_9","BB_per_9","K_BB","xFIP",
                  "BB_pct","K_pct"]
-DEFENSE_COLS  = ["TC","PO","A","E","FLD%","DP"]
+DEFENSE_COLS  = ["TC","PO","A","E","FLD%","DP","SBA","CSB","PB","CI"]
+
+# ── THRESHOLD ALERTS ──────────────────────────────────────────────────────────
+BATTING_THRESHOLDS = {
+    "HR" : ("≥", 1),
+    "RBI": ("≥", 3),
+    "AVG": ("≥", 0.400),
+    "OPS": ("≥", 1.000),
+}
+
+PITCHING_THRESHOLDS = {
+    "SO" : ("≥", 10),
+    "ERA": ("≤", 1.00),
+    "IP" : ("≥", 7.0),
+}
+
+# ── NOTIFICATIONS ─────────────────────────────────────────────────────────────
+def push(title, message, priority=0):
+    """Send a Pushover notification. Silently skips if credentials are missing."""
+    if not PUSHOVER_USER or not PUSHOVER_TOKEN:
+        print(f"    [Pushover skipped] {title}: {message}")
+        return
+    try:
+        requests.post(
+            "https://api.pushover.net/1/messages.json",
+            data={
+                "token"   : PUSHOVER_TOKEN,
+                "user"    : PUSHOVER_USER,
+                "title"   : title,
+                "message" : message,
+                "priority": priority,
+            },
+            timeout=10,
+        )
+    except Exception as e:
+        print(f"    ⚠ Pushover error: {e}")
+
+
+def _threshold_triggered(new_val, old_val, op, cutoff):
+    """Return True if new_val newly crosses cutoff (old_val did not)."""
+    try:
+        nv = float(new_val) if new_val not in ("", "—", None) else None
+        ov = float(old_val) if old_val not in ("", "—", None) else None
+        if nv is None:
+            return False
+        meets_now    = (nv >= cutoff) if op == "≥" else (nv <= cutoff)
+        met_before   = ((ov >= cutoff) if op == "≥" else (ov <= cutoff)) if ov is not None else False
+        return meets_now and not met_before
+    except (ValueError, TypeError):
+        return False
+
+
+def check_thresholds(player, new_stats, old_row, stat_type):
+    """Fire a Pushover alert when a player newly crosses a notable threshold."""
+    if old_row is None:
+        return
+    thresholds = BATTING_THRESHOLDS if stat_type == "batting" else PITCHING_THRESHOLDS
+    for stat, (op, cutoff) in thresholds.items():
+        new_val = new_stats.get(stat, "")
+        old_val = old_row.get(stat, "")
+        if _threshold_triggered(new_val, old_val, op, cutoff):
+            push(
+                f"🚨 {player['Name']} — {stat} alert",
+                f"{player['School']} ({player['Division']})\n"
+                f"{stat}: {new_val} (was {old_val or '—'})",
+                priority=0,
+            )
 
 # ── GOOGLE SHEETS ─────────────────────────────────────────────────────────────
 def connect():
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
-    scopes = ["https://www.googleapis.com/auth/spreadsheets",
-              "https://www.googleapis.com/auth/drive"]
-    creds  = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     return gspread.authorize(creds).open_by_key(SPREADSHEET_ID)
+
 
 def get_players(sheet):
     return sheet.worksheet("Players").get_all_records()
@@ -63,10 +141,12 @@ def split_combined(value, sep="-"):
         return parts[0].strip(), parts[1].strip()
     return "", ""
 
+
 def align_headers(hdrs, cells):
     if "Player" in hdrs and len(hdrs) == len(cells) + 1:
         hdrs = [h for h in hdrs if h != "Player"]
     return hdrs
+
 
 def map_row(raw, col_map):
     out = {}
@@ -133,6 +213,7 @@ def map_row(raw, col_map):
 
     return out
 
+
 def zero_stats(col_map):
     out = {}
     for dest in col_map.values():
@@ -142,6 +223,11 @@ def zero_stats(col_map):
         else:
             out[dest] = "0"
     return out
+
+
+def is_zero_row(mapped, cols):
+    """Return True if every tracked stat is zero or empty."""
+    return all(not mapped.get(c) or str(mapped.get(c)) in ("0", "", "—") for c in cols)
 
 # ── SCRAPING ──────────────────────────────────────────────────────────────────
 def find_table(page, stat_type):
@@ -155,16 +241,17 @@ def find_table(page, stat_type):
         if stat_type == "defense"  and "FLD%" in hdrs and "PO"  in hdrs: return table, hdrs
     return None, []
 
+
 def scrape(page, player, stat_type):
     jersey = str(player.get("Jersey", "")).strip()
     if not jersey:
         print(f"    ⚠ No jersey number — writing zeros")
-        return zero_stats({"batting":BATTING_MAP,"pitching":PITCHING_MAP,"defense":DEFENSE_MAP}[stat_type])
+        return zero_stats({"batting": BATTING_MAP, "pitching": PITCHING_MAP, "defense": DEFENSE_MAP}[stat_type])
 
     page.goto(player["Stats_URL"], wait_until="domcontentloaded", timeout=60000)
     time.sleep(5)
 
-    col_map = {"batting":BATTING_MAP,"pitching":PITCHING_MAP,"defense":DEFENSE_MAP}[stat_type]
+    col_map = {"batting": BATTING_MAP, "pitching": PITCHING_MAP, "defense": DEFENSE_MAP}[stat_type]
     table, hdrs = find_table(page, stat_type)
     if not table:
         print(f"    ⚠ No {stat_type} table found — writing zeros")
@@ -182,7 +269,7 @@ def scrape(page, player, stat_type):
     print(f"    ⚠ Jersey #{jersey} not found — writing zeros")
     return zero_stats(col_map)
 
-# ── SHEET WRITING ──────────────────────────────────────────────────────────────
+# ── SHEET WRITING ─────────────────────────────────────────────────────────────
 def write_stats(sheet, tab, player, mapped, target_cols):
     """Update current stats row. Returns previous row for comparison."""
     ws  = sheet.worksheet(tab)
@@ -195,10 +282,11 @@ def write_stats(sheet, tab, player, mapped, target_cols):
         if r.get("PlayerID") == pid:
             ws.update(values=[row], range_name=f"A{i+2}")
             print(f"    ✓ {tab} updated")
-            return r          # return old row for comparison
+            return r
     ws.append_row(row)
     print(f"    ✓ {tab} added")
-    return None               # no previous row
+    return None
+
 
 def write_history(sheet, tab, player, mapped, target_cols):
     ws  = sheet.worksheet(tab)
@@ -208,10 +296,11 @@ def write_history(sheet, tab, player, mapped, target_cols):
     ws.append_row(row)
     print(f"    ✓ {tab} snapshot saved")
 
+
 def log(sheet, player, status, notes=""):
     sheet.worksheet("Scrape_Log").append_row([
         datetime.now().strftime("%Y-%m-%d %H:%M"),
-        player["PlayerID"], player["Name"], player["School"], status, notes
+        player["PlayerID"], player["Name"], player["School"], status, notes,
     ])
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
@@ -239,36 +328,32 @@ def main(test_player_id=None):
             try:
                 if player["Type"] == "Hitter":
                     for st, tab, hist, cols in [
-                        ("batting", "Batting", "Batting_History", BATTING_COLS),
-                        ("defense", "Defense", "Defense_History", DEFENSE_COLS),
+                        ("batting", "Batting",  "Batting_History",  BATTING_COLS),
+                        ("defense", "Defense",  "Defense_History",  DEFENSE_COLS),
                     ]:
-                        s        = scrape(page, player, st)
-                        old_row  = write_stats(sheet, tab, player, s, cols)
+                        s       = scrape(page, player, st)
+                        old_row = write_stats(sheet, tab, player, s, cols)
                         write_history(sheet, hist, player, s, cols)
                         if st == "batting":
-                            # First appearance
                             if old_row and is_zero_row(old_row, BATTING_COLS) and not is_zero_row(s, BATTING_COLS):
                                 push(
                                     f"⚾ {player['Name']} has arrived!",
                                     f"{player['School']} ({player['Division']})\n"
                                     f"AVG: {s.get('AVG','—')}  OPS: {s.get('OPS','—')}  H: {s.get('H','—')}",
-                                    priority=1
+                                    priority=1,
                                 )
-                            # Threshold check
                             check_thresholds(player, s, old_row, "batting")
                 else:
                     s       = scrape(page, player, "pitching")
                     old_row = write_stats(sheet, "Pitching", player, s, PITCHING_COLS)
                     write_history(sheet, "Pitching_History", player, s, PITCHING_COLS)
-                    # First appearance
                     if old_row and is_zero_row(old_row, PITCHING_COLS) and not is_zero_row(s, PITCHING_COLS):
                         push(
                             f"🥎 {player['Name']} has arrived!",
                             f"{player['School']} ({player['Division']})\n"
                             f"ERA: {s.get('ERA','—')}  IP: {s.get('IP','—')}  K: {s.get('SO','—')}",
-                            priority=1
+                            priority=1,
                         )
-                    # Threshold check
                     check_thresholds(player, s, old_row, "pitching")
                 log(sheet, player, "SUCCESS")
             except Exception as e:
@@ -277,6 +362,7 @@ def main(test_player_id=None):
 
         browser.close()
     print("\n✓ Done! Check your Google Sheet.")
+
 
 if __name__ == "__main__":
     main()
