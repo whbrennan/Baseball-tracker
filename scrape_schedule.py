@@ -1,466 +1,438 @@
 """
 scrape_schedule.py
-Scrapes Sidearm Sports schedule pages via their print URL (static HTML)
-and writes results to a 'Schedule' tab in Google Sheets.
+Scrapes baseball schedules for all schools in schools.json and writes
+results to the Schedule sheet in the project Google Spreadsheet.
 
-Usage:
-    python3 scrape_schedule.py                        # all schools
-    python3 scrape_schedule.py --today                # today only
-    python3 scrape_schedule.py --school "Maryland"    # one school
-    python3 scrape_schedule.py --debug                # save HTML for all schools
+Handles two page layouts:
+  - TABLE layout : standard Sidearm ?print=true pages (most schools)
+  - JSON layout  : Nuxt/Vue embedded JSON blob (GW and similar)
 """
 
-import json, os, re, sys, time, argparse
-from datetime import datetime, date
-from pathlib import Path
-from urllib.parse import urlparse
+import json
+import os
+import re
+import sys
+import time
+from datetime import datetime
+
+import gspread
 import requests
 from bs4 import BeautifulSoup
 from google.oauth2.service_account import Credentials
-import gspread
 
-# ── CONFIG ────────────────────────────────────────────────────────────────────
-SPREADSHEET_ID = '1vZ9retMliQq99hw2twZ-KtlvLKLOStkcHq73CAx94gs'
-SHEET_NAME     = 'Schedule'
-SCHOOLS_FILE   = 'schools.json'
-REQUEST_DELAY  = 1.5
+# ── Config ────────────────────────────────────────────────────────────────────
+
+SPREADSHEET_ID = "1vZ9retMliQq99hw2twZ-KtlvLKLOStkcHq73CAx94gs"
+SHEET_NAME     = "Schedule"
+SCHOOLS_FILE   = "schools.json"
 CURRENT_YEAR   = datetime.now().year
 
-MONTH_MAP = {
-    'january':1,'february':2,'march':3,'april':4,'may':5,'june':6,
-    'july':7,'august':8,'september':9,'october':10,'november':11,'december':12,
-    'jan':1,'feb':2,'mar':3,'apr':4,'jun':6,'jul':7,'aug':8,
-    'sep':9,'oct':10,'nov':11,'dec':12
-}
-
-TV_MAP = {
-    'espn+':'ESPN+','espnu':'ESPNU','espn2':'ESPN2','espn':'ESPN',
-    'sec network':'SEC Network','acc network':'ACC Network',
-    'big ten network':'Big Ten Network','mlb network':'MLB Network',
-    'fs1':'FS1','fs2':'FS2','stadium':'Stadium',
-    'flobaseball':'FloBaseball','youtube':'YouTube','live stream':'Stream',
-}
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
 
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                  'AppleWebKit/537.36 (KHTML, like Gecko) '
-                  'Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,*/*',
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    )
 }
 
-# ── GOOGLE SHEETS AUTH ────────────────────────────────────────────────────────
+SHEET_COLUMNS = [
+    "SCHOOL", "DIVISION", "DATE", "TIME", "OPPONENT",
+    "HOME_AWAY", "LOCATION", "TV", "RESULT", "ESPN_TEAM_ID", "LAST_UPDATED",
+]
+
+# Schools whose pages embed schedule data as a Nuxt JSON blob
+JSON_LAYOUT_SCHOOLS = {"George Washington"}
+
+
+# ── Google Sheets auth ────────────────────────────────────────────────────────
+
 def get_sheet():
-    raw = os.environ.get('GOOGLE_CREDENTIALS', '').strip()
-    if not raw:
-        print("ERROR: GOOGLE_CREDENTIALS not set.")
-        sys.exit(1)
-    try:
-        info = json.loads(raw)
-    except json.JSONDecodeError as e:
-        print(f"ERROR: GOOGLE_CREDENTIALS is not valid JSON — {e}")
-        sys.exit(1)
-    if 'private_key' in info:
-        info['private_key'] = info['private_key'].replace('\\n', '\n')
-    scopes = ['https://spreadsheets.google.com/feeds',
-              'https://www.googleapis.com/auth/drive']
-    creds  = Credentials.from_service_account_info(info, scopes=scopes)
+    creds_json = os.environ.get("GOOGLE_CREDENTIALS")
+    if not creds_json:
+        sys.exit("ERROR: GOOGLE_CREDENTIALS environment variable not set.")
+    creds_dict = json.loads(creds_json)
+    creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
     client = gspread.authorize(creds)
-    wb     = client.open_by_key(SPREADSHEET_ID)
+    spreadsheet = client.open_by_key(SPREADSHEET_ID)
     try:
-        ws = wb.worksheet(SHEET_NAME)
+        sheet = spreadsheet.worksheet(SHEET_NAME)
     except gspread.WorksheetNotFound:
-        ws = wb.add_worksheet(title=SHEET_NAME, rows=2000, cols=15)
-        print(f"  Created new sheet tab: {SHEET_NAME}")
-    return ws
-
-# ── LOAD SCHOOLS ──────────────────────────────────────────────────────────────
-def load_schools():
-    p = Path(SCHOOLS_FILE)
-    if not p.exists():
-        print(f"ERROR: {SCHOOLS_FILE} not found.")
-        sys.exit(1)
-    return json.loads(p.read_text())
-
-# ── DATE / TIME HELPERS ───────────────────────────────────────────────────────
-def parse_date(text):
-    """
-    Try every known date format. Returns YYYY-MM-DD or ''.
-    Handles: 2026-02-14, 2/14/26, 2/14/2026, Feb. 14, February 14, Feb 14 2026
-    """
-    text = text.strip()
-
-    # ISO: 2026-02-14
-    m = re.search(r'(\d{4})-(\d{2})-(\d{2})', text)
-    if m: return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
-
-    # mm/dd/yyyy or mm/dd/yy
-    m = re.search(r'\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b', text)
-    if m:
-        yr = int(m.group(3))
-        yr = yr + 2000 if yr < 100 else yr
-        return f"{yr}-{int(m.group(1)):02d}-{int(m.group(2)):02d}"
-
-    # Month name: "Feb. 14", "February 14", "Feb 14, 2026"
-    m = re.search(
-        r'\b(january|february|march|april|may|june|july|august|'
-        r'september|october|november|december|'
-        r'jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\.?\s+'
-        r'(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?',
-        text, re.IGNORECASE
-    )
-    if m:
-        mo  = MONTH_MAP[m.group(1).lower()]
-        day = int(m.group(2))
-        yr  = int(m.group(3)) if m.group(3) else CURRENT_YEAR
-        return f"{yr}-{mo:02d}-{day:02d}"
-
-    return ''
+        sheet = spreadsheet.add_worksheet(title=SHEET_NAME, rows=2000, cols=len(SHEET_COLUMNS))
+    return sheet
 
 
-def parse_time(text):
-    """Extract and normalize a time like '6:00 PM' from any string."""
-    m = re.search(r'(\d{1,2}):(\d{2})\s*(a\.?m\.?|p\.?m\.?)?', text, re.I)
-    if m:
-        h, mn = int(m.group(1)), m.group(2)
-        ap = re.sub(r'\.', '', m.group(3) or '').upper()
-        if not ap:
-            ap = 'PM' if 1 <= h <= 7 else 'AM'
-        h12 = h % 12 or 12
-        return f"{h12}:{mn} {ap}"
-    # Time without colon: "6 PM"
-    m = re.search(r'\b(\d{1,2})\s*(am|pm)\b', text, re.I)
-    if m:
-        return f"{m.group(1)}:00 {m.group(2).upper()}"
-    return 'TBD'
+# ── HTML fetch ────────────────────────────────────────────────────────────────
 
-
-def normalize_tv(text):
-    if not text: return ''
-    low = text.lower()
-    for key, label in TV_MAP.items():
-        if key in low: return label
-    return text.strip()
-
-
-# ── SIDEARM PRINT PAGE PARSER ─────────────────────────────────────────────────
-def fetch_print_page(schedule_url):
-    """Fetch ?print=true version of a Sidearm schedule page."""
-    # Try both print URL patterns
-    for url in [schedule_url.rstrip('/') + '?print=true',
-                schedule_url.rstrip('/') + '/print']:
+def fetch_soup(url, retries=3, delay=5):
+    for attempt in range(retries):
         try:
-            r = requests.get(url, headers=HEADERS, timeout=20)
-            if r.status_code == 200 and len(r.text) > 500:
-                return url, r.text
+            resp = requests.get(url, headers=HEADERS, timeout=20)
+            resp.raise_for_status()
+            return BeautifulSoup(resp.text, "html.parser")
+        except requests.RequestException as e:
+            print(f"  [warn] attempt {attempt+1}/{retries} failed for {url}: {e}")
+            if attempt < retries - 1:
+                time.sleep(delay)
+    print(f"  [error] all retries failed for {url}")
+    return None
+
+
+# ── JSON layout parser (GW / Nuxt embedded data) ─────────────────────────────
+
+def parse_json_layout(soup, school, division, espn_team_id):
+    """
+    Sidearm sites built on Nuxt/Vue embed all schedule data as a flat reference
+    array in a <script> tag. Each entry is either a primitive or a dict whose
+    values are indices into the same array. We locate the games list, resolve
+    each game one level deep, and extract the fields we need.
+    """
+    raw = _extract_nuxt_array(soup)
+    if raw is None:
+        print("  [warn] could not find/parse Nuxt JSON blob")
+        return []
+
+    def res(val):
+        """Resolve one level: if val is an int index return raw[val], else val."""
+        if isinstance(val, int) and 0 <= val < len(raw):
+            return raw[val]
+        return val
+
+    def res_dict(val):
+        """Resolve a value and, if the result is a dict, resolve its values too."""
+        obj = res(val)
+        if isinstance(obj, dict):
+            return {k: res(v) for k, v in obj.items()}
+        return obj
+
+    # Navigate: raw[456] = {'schedules-baseball,': 457}
+    #           raw[457] = { ..., 'games': 470 }
+    #           raw[470] = [471, 531, 565, ...]  ← list of game indices
+    schedule_ptr = None
+    for i, entry in enumerate(raw):
+        if isinstance(entry, dict) and "games" in entry and "school_name" in entry:
+            schedule_ptr = i
+            break
+    if schedule_ptr is None:
+        print("  [warn] could not find schedule node in Nuxt JSON")
+        return []
+
+    games_idx  = res(raw[schedule_ptr].get("games"))
+    game_list  = raw[games_idx] if isinstance(games_idx, int) else games_idx
+    if not isinstance(game_list, list):
+        print("  [warn] games node is not a list")
+        return []
+
+    games = []
+    for gi in game_list:
+        try:
+            game_obj = res(gi)
+            if not isinstance(game_obj, dict):
+                continue
+
+            # ── Date ──
+            date_raw = res(game_obj.get("date", ""))
+            try:
+                dt       = datetime.fromisoformat(str(date_raw))
+                date_fmt = dt.strftime("%Y-%m-%d")
+            except (ValueError, TypeError):
+                continue
+
+            # ── Time ──
+            game_time = normalise_time(str(res(game_obj.get("time", "TBA")) or "TBA"))
+
+            # ── Home / Away ──
+            loc_ind   = res(game_obj.get("location_indicator", "H"))
+            home_away = "H" if str(loc_ind).upper() != "A" else "A"
+
+            # ── Location ──
+            location  = str(res(game_obj.get("location", "")) or "")
+
+            # ── Opponent ──
+            opp_obj   = res_dict(game_obj.get("opponent"))
+            opponent  = str(res(opp_obj.get("title", "Unknown")) if isinstance(opp_obj, dict) else "Unknown")
+
+            # ── TV ──
+            media_obj = res_dict(game_obj.get("media"))
+            tv        = ""
+            if isinstance(media_obj, dict):
+                tv_val = res(media_obj.get("tv"))
+                if tv_val and tv_val is not None and str(tv_val).lower() not in ("none", "false", ""):
+                    tv = str(tv_val)
+                else:
+                    # Check for tv_image (ESPN+ logo present = ESPN+ game)
+                    tv_img = res(media_obj.get("tv_image"))
+                    if tv_img:
+                        tv = "ESPN+"
+
+            # ── Result ──
+            result    = ""
+            result_obj = res_dict(game_obj.get("result"))
+            if isinstance(result_obj, dict):
+                status     = res(result_obj.get("status", ""))
+                team_score = res(result_obj.get("team_score"))
+                opp_score  = res(result_obj.get("opponent_score"))
+                if status and str(status).upper() in ("W", "L", "T") and team_score is not None:
+                    result = f"{str(status).upper()}, {team_score}-{opp_score}"
+
+            games.append(_build_game(school, division, date_fmt, game_time, opponent,
+                                     home_away, location, tv, result, espn_team_id))
         except Exception as e:
-            print(f"    ⚠️  Fetch error ({url}): {e}")
-    return None, None
-
-
-def parse_print_page(html, school_name, debug=False):
-    """
-    Parse Sidearm's ?print=true static HTML schedule.
-
-    Sidearm print pages render a table where each <tr> is one game.
-    Column order varies by school but typically:
-      Date | Opponent | Location/H-A | Time | Result | TV
-
-    Strategy:
-    1. Find the schedule table by looking for rows containing date-like text
-    2. Auto-detect which column index holds date, opponent, time, etc.
-    3. Parse every data row
-    """
-    soup = BeautifulSoup(html, 'html.parser')
-
-    if debug:
-        # Save full HTML for manual inspection in Codespaces
-        fname = f"debug_{school_name.replace(' ','_').replace('&','and')}.html"
-        Path(fname).write_text(html)
-        print(f"    📄 Saved {fname} ({len(html):,} chars)")
-
-    games = []
-
-    # ── Find all tables and pick the one most likely to be the schedule ───────
-    best_table = None
-    best_score = 0
-    for tbl in soup.find_all('table'):
-        text = tbl.get_text(' ')
-        # Score the table by how many date-like strings it contains
-        score = len(re.findall(
-            r'\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*'
-            r'\.?\s+\d{1,2}|\d{1,2}/\d{1,2}/\d{2,4}',
-            text, re.I
-        ))
-        if score > best_score:
-            best_score = score
-            best_table = tbl
-
-    if not best_table:
-        # No tables — try <li> or <div> based layouts
-        return parse_list_layout(soup, school_name)
-
-    rows = best_table.find_all('tr')
-    if not rows:
-        return []
-
-    # ── Auto-detect column positions from header row ──────────────────────────
-    col_date = col_opp = col_time = col_loc = col_result = col_tv = None
-    header_row = rows[0]
-    headers    = [th.get_text(strip=True).lower()
-                  for th in header_row.find_all(['th', 'td'])]
-
-    for i, h in enumerate(headers):
-        if any(x in h for x in ['date','day']):
-            col_date = i
-        elif any(x in h for x in ['opponent','team','vs','game']):
-            col_opp = i
-        elif any(x in h for x in ['time','start']):
-            col_time = i
-        elif any(x in h for x in ['location','site','venue','city','place']):
-            col_loc = i
-        elif any(x in h for x in ['result','score','w/l','record']):
-            col_result = i
-        elif any(x in h for x in ['tv','broadcast','network','coverage']):
-            col_tv = i
-
-    if debug:
-        print(f"    Column map — date:{col_date} opp:{col_opp} "
-              f"time:{col_time} loc:{col_loc} result:{col_result} tv:{col_tv}")
-        print(f"    Headers: {headers}")
-
-    # ── Parse each data row ───────────────────────────────────────────────────
-    for row in rows[1:]:
-        cells = row.find_all(['td', 'th'])
-        if not cells:
+            print(f"  [warn] JSON game parse error: {e}")
             continue
-        texts = [c.get_text(' ', strip=True) for c in cells]
-        full  = ' '.join(texts)
-
-        # Skip header/section rows (no useful data)
-        if len(texts) < 2:
-            continue
-        if all(t == '' for t in texts):
-            continue
-
-        # ── Extract date ──────────────────────────────────────────────────────
-        game_date = ''
-        if col_date is not None and col_date < len(texts):
-            game_date = parse_date(texts[col_date])
-        if not game_date:
-            # Scan all cells for a date
-            for t in texts:
-                game_date = parse_date(t)
-                if game_date:
-                    break
-        if not game_date:
-            continue   # Can't use a row with no date
-
-        # ── Extract opponent ──────────────────────────────────────────────────
-        opponent = ''
-        if col_opp is not None and col_opp < len(texts):
-            opponent = texts[col_opp]
-        if not opponent:
-            # Pick the longest non-date, non-time cell as opponent
-            candidates = []
-            for t in texts:
-                if not parse_date(t) and not re.match(r'^\d{1,2}:\d{2}', t):
-                    candidates.append(t)
-            if candidates:
-                opponent = max(candidates, key=len)
-
-        # Clean up "vs. Team" / "at Team" prefixes
-        opponent = re.sub(r'^(vs\.?\s*|at\s+@?\s*)', '', opponent,
-                          flags=re.I).strip()
-        # Remove score that may be appended: "Opponent Name W 7-3"
-        opponent = re.sub(r'\s+[WLT]\s+\d+[-–]\d+.*$', '', opponent).strip()
-
-        if not opponent or len(opponent) < 2:
-            continue
-
-        # ── Home / Away ───────────────────────────────────────────────────────
-        raw_loc = texts[col_loc] if col_loc is not None and col_loc < len(texts) else ''
-        home_away = 'Home'
-        if re.search(r'\baway\b|^@\s', raw_loc + full[:60], re.I):
-            home_away = 'Away'
-        elif re.search(r'\bneutral\b|\btournament\b|\btourney\b|\bclassic\b',
-                       raw_loc + full[:60], re.I):
-            home_away = 'Neutral'
-        # Also check original opponent text before cleaning
-        orig_opp = texts[col_opp] if col_opp is not None and col_opp < len(texts) else full
-        if re.search(r'^at\s|^@\s', orig_opp, re.I):
-            home_away = 'Away'
-
-        # ── Time ─────────────────────────────────────────────────────────────
-        game_time = 'TBD'
-        if col_time is not None and col_time < len(texts):
-            game_time = parse_time(texts[col_time]) if texts[col_time] else 'TBD'
-        if game_time == 'TBD':
-            # Scan all cells
-            for t in texts:
-                pt = parse_time(t)
-                if pt != 'TBD':
-                    game_time = pt
-                    break
-
-        # ── TV ────────────────────────────────────────────────────────────────
-        tv = ''
-        if col_tv is not None and col_tv < len(texts):
-            tv = normalize_tv(texts[col_tv])
-        if not tv:
-            tv_m = re.search(
-                r'\b(espn\+?2?u?|sec network|acc network|fs[12]|'
-                r'big ten network|mlb network|stadium|flobaseball)\b',
-                full, re.I
-            )
-            if tv_m:
-                tv = normalize_tv(tv_m.group(1))
-
-        # ── Result ────────────────────────────────────────────────────────────
-        result = ''
-        if col_result is not None and col_result < len(texts):
-            result = texts[col_result]
-        if not result:
-            r_m = re.search(r'\b([WL])\s+(\d+[-–]\d+)', full)
-            if r_m:
-                result = f"{r_m.group(1)} {r_m.group(2)}"
-
-        games.append({
-            'school':    school_name,
-            'date':      game_date,
-            'time':      game_time,
-            'opponent':  opponent,
-            'home_away': home_away,
-            'location':  raw_loc,
-            'tv':        tv,
-            'result':    result,
-        })
 
     return games
 
 
-def parse_list_layout(soup, school_name):
-    """
-    Fallback for schools that use <li> or <div> based layouts
-    instead of a <table> on their print page.
-    """
-    games = []
-    containers = (
-        soup.select('li.schedule-item, li[class*="game"], '
-                    'div.schedule-item, div[class*="game-item"], '
-                    'article[class*="game"]')
-    )
-    for item in containers:
-        text      = item.get_text(' ', strip=True)
-        game_date = parse_date(text)
-        if not game_date:
+def _extract_nuxt_array(soup):
+    """Find the Nuxt flat reference array embedded in a <script> tag."""
+    for script in soup.find_all("script"):
+        txt = script.string or ""
+        if "ShallowReactive" not in txt:
             continue
-        opp_m    = re.search(r'(?:vs\.?|at)\s+([A-Z][A-Za-z &.\'-]+)', text)
-        opponent = opp_m.group(1).strip() if opp_m else ''
-        if not opponent:
+        start = txt.find("[[")
+        if start == -1:
+            start = txt.find("[{")
+        if start == -1:
             continue
-        games.append({
-            'school':    school_name,
-            'date':      game_date,
-            'time':      parse_time(text),
-            'opponent':  opponent,
-            'home_away': 'Away' if re.search(r'\bat\b', text[:40], re.I) else 'Home',
-            'location':  '',
-            'tv':        '',
-            'result':    '',
-        })
+        try:
+            return json.loads(txt[start:])
+        except Exception:
+            continue
+    return None
+
+
+# ── TABLE layout parser (standard Sidearm ?print=true) ───────────────────────
+
+def parse_table_layout(soup, school, division, espn_team_id):
+    games  = []
+    tables = soup.find_all("table")
+    if not tables:
+        return games
+
+    for table in tables:
+        rows = table.find_all("tr")
+        if len(rows) < 2:
+            continue
+
+        col_map = {}
+        for i, th in enumerate(rows[0].find_all(["th", "td"])):
+            txt = th.get_text(strip=True).upper()
+            if "DATE" in txt:
+                col_map["date"] = i
+            elif "OPP" in txt:
+                col_map["opp"] = i
+            elif any(x in txt for x in ("LOC", "SITE")):
+                col_map["loc"] = i
+            elif any(x in txt for x in ("RESULT", "SCORE", "W/L")):
+                col_map["result"] = i
+            elif "TIME" in txt:
+                col_map["time"] = i
+            elif any(x in txt for x in ("TV", "NETWORK")):
+                col_map["tv"] = i
+
+        for row in rows[1:]:
+            cells = row.find_all(["td", "th"])
+            if len(cells) < 2:
+                continue
+            try:
+                game = _extract_from_table_row(cells, col_map, school, division, espn_team_id)
+                if game:
+                    games.append(game)
+            except Exception as e:
+                print(f"  [warn] table row parse error: {e}")
+
     return games
 
 
-# ── MAIN SCRAPE FUNCTION ──────────────────────────────────────────────────────
-def scrape_school(entry, debug=False):
-    name         = entry['school']
-    schedule_url = entry.get('schedule_url', '')
-    if not schedule_url:
-        print(f"  ⚠️  No schedule_url for {name}, skipping")
-        return []
+def _extract_from_table_row(cells, col_map, school, division, espn_team_id):
+    def cell_text(idx):
+        return cells[idx].get_text(" ", strip=True) if 0 <= idx < len(cells) else ""
 
-    url, html = fetch_print_page(schedule_url)
-    if not html:
-        print(f"    ⚠️  Could not fetch print page")
-        return []
+    date_idx = col_map.get("date", 0)
+    date_fmt = parse_date(cell_text(date_idx))
+    if not date_fmt:
+        return None
 
-    print(f"    → Print page: {url}")
-    games = parse_print_page(html, name, debug=debug)
+    opp_idx             = col_map.get("opp", 1)
+    opp_raw             = cell_text(opp_idx)
+    opponent, home_away = parse_opponent(opp_raw)
+    if not opponent:
+        return None
 
-    if games:
-        print(f"    ✓  Found {len(games)} games")
+    loc_idx  = col_map.get("loc", 2)
+    location = cell_text(loc_idx)
+
+    res_idx  = col_map.get("result", 3)
+    result   = normalise_result(cell_text(res_idx))
+
+    time_idx  = col_map.get("time", -1)
+    game_time = cell_text(time_idx) if time_idx >= 0 else ""
+    if not game_time:
+        game_time = (extract_time(cell_text(date_idx)) or
+                     extract_time(opp_raw) or "TBA")
+    game_time = normalise_time(game_time)
+
+    tv = ""
+    if "tv" in col_map:
+        tv = cell_text(col_map["tv"])
+    if not tv:
+        for idx in [opp_idx, date_idx]:
+            if 0 <= idx < len(cells):
+                img = cells[idx].find("img")
+                if img and re.search(r"espn|accn", img.get("alt", "") + img.get("src", ""), re.I):
+                    tv = img.get("alt", "ESPN+").strip()
+                    break
+
+    return _build_game(school, division, date_fmt, game_time, opponent,
+                       home_away, location, tv, result, espn_team_id)
+
+
+# ── Shared helpers ────────────────────────────────────────────────────────────
+
+def _build_game(school, division, date, time_, opponent, home_away,
+                location, tv, result, espn_team_id):
+    return {
+        "SCHOOL":       school,
+        "DIVISION":     division,
+        "DATE":         date,
+        "TIME":         time_,
+        "OPPONENT":     opponent,
+        "HOME_AWAY":    home_away,
+        "LOCATION":     location,
+        "TV":           tv,
+        "RESULT":       result,
+        "ESPN_TEAM_ID": str(espn_team_id) if espn_team_id else "",
+        "LAST_UPDATED": datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+
+
+def parse_date(raw):
+    raw = re.sub(r"\([A-Za-z]+\)", "", str(raw)).strip()
+    raw = re.sub(r"[,]+", "", raw).strip()
+    for fmt in ("%b %d %Y", "%b %d", "%B %d %Y", "%B %d",
+                "%m/%d/%Y", "%m/%d", "%Y-%m-%d"):
+        try:
+            dt = datetime.strptime(raw, fmt)
+            if dt.year == 1900:
+                dt = dt.replace(year=CURRENT_YEAR)
+            return dt.strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return None
+
+
+def extract_time(raw):
+    m = re.search(r"(\d{1,2}:\d{2}\s*[ap]\.?m\.?)", raw, re.IGNORECASE)
+    return normalise_time(m.group(1)) if m else None
+
+
+def normalise_time(raw):
+    return (str(raw).strip()
+            .replace("a.m.", "AM").replace("p.m.", "PM")
+            .replace("A.M.", "AM").replace("P.M.", "PM")
+            .replace(" ", ""))
+
+
+def parse_opponent(raw):
+    raw = raw.strip()
+    m   = re.match(r"^(vs\.?|at)\s+(.+)$", raw, re.IGNORECASE)
+    if m:
+        ha   = "H" if m.group(1).lower().startswith("vs") else "A"
+        name = m.group(2).strip()
     else:
-        print(f"    ⚠️  No games parsed — run with --debug to save HTML for inspection")
+        ha, name = "H", raw
+    name = re.sub(r"\s+[WL],\s*\d+[-\u2013]\d+.*$", "", name).strip()
+    return (name or None, ha)
 
+
+def normalise_result(raw):
+    if not raw:
+        return ""
+    raw = raw.strip()
+    if re.match(r"^[WLT],", raw):
+        return raw
+    m = re.match(r"^([WLT])\s*[,\s]*(\d+[-\u2013]\d+)", raw, re.IGNORECASE)
+    return f"{m.group(1).upper()}, {m.group(2)}" if m else raw
+
+
+# ── Per-school scrape ─────────────────────────────────────────────────────────
+
+def scrape_school(school_cfg):
+    school       = school_cfg["school"]
+    division     = school_cfg.get("division", "D1")
+    espn_team_id = school_cfg.get("espn_team_id", "")
+    base_url     = school_cfg.get("schedule_url", "")
+
+    if not base_url:
+        print(f"  [skip] {school}: no schedule_url")
+        return []
+
+    sep = "&" if "?" in base_url else "?"
+    url = f"{base_url}{sep}print=true"
+
+    print(f"  Fetching {school} → {url}")
+    soup = fetch_soup(url)
+    if not soup:
+        return []
+
+    if school in JSON_LAYOUT_SCHOOLS:
+        games  = parse_json_layout(soup, school, division, espn_team_id)
+        layout = "json"
+    else:
+        tables_with_data = [t for t in soup.find_all("table") if len(t.find_all("tr")) >= 2]
+        if tables_with_data:
+            games  = parse_table_layout(soup, school, division, espn_team_id)
+            layout = "table"
+        else:
+            games  = parse_json_layout(soup, school, division, espn_team_id)
+            layout = "json (auto)"
+
+    print(f"    [{layout}] {len(games)} games")
     return games
 
 
-# ── MAIN ──────────────────────────────────────────────────────────────────────
+# ── Write to Google Sheets ────────────────────────────────────────────────────
+
+def write_to_sheet(sheet, all_games):
+    print(f"\nWriting {len(all_games)} total games to '{SHEET_NAME}'...")
+    rows = [SHEET_COLUMNS] + [[g.get(c, "") for c in SHEET_COLUMNS] for g in all_games]
+    sheet.clear()
+    sheet.update(rows, value_input_option="RAW")
+    print(f"Done. {len(all_games)} rows written.")
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--today',  action='store_true',
-                        help='Only write today\'s games')
-    parser.add_argument('--school', type=str, default='',
-                        help='Scrape one school by name')
-    parser.add_argument('--debug',  action='store_true',
-                        help='Save raw HTML files for inspection')
-    args = parser.parse_args()
+    if not os.path.exists(SCHOOLS_FILE):
+        sys.exit(f"ERROR: {SCHOOLS_FILE} not found.")
 
-    schools = load_schools()
-    if args.school:
-        schools = [s for s in schools
-                   if args.school.lower() in s['school'].lower()]
-        if not schools:
-            print(f"No school matching '{args.school}'")
-            sys.exit(1)
+    with open(SCHOOLS_FILE) as f:
+        schools = json.load(f)
 
-    today_str = date.today().isoformat()
+    print(f"Scraping {len(schools)} schools (year={CURRENT_YEAR})...\n")
+
     all_games = []
-
-    for entry in schools:
-        name = entry['school']
-        div  = entry.get('division', '')
-        espn = entry.get('espn_team_id', '')
-        print(f"\n🔍 Scraping: {name}")
-
-        games = scrape_school(entry, debug=args.debug)
-
-        for g in games:
-            g['division']     = div
-            g['espn_team_id'] = espn
-            g['last_updated'] = datetime.now().strftime('%Y-%m-%d %H:%M')
-
-        if args.today:
-            games = [g for g in games if g.get('date') == today_str]
-            print(f"    → {len(games)} game(s) today")
-
-        all_games.extend(games)
-        time.sleep(REQUEST_DELAY)
+    for school_cfg in schools:
+        try:
+            games = scrape_school(school_cfg)
+            all_games.extend(games)
+        except Exception as e:
+            print(f"  [error] {school_cfg.get('school', '?')}: {e}")
+        time.sleep(1)
 
     if not all_games:
-        print("\nNo games to write.")
+        print("WARNING: no games scraped — sheet not updated.")
         return
 
-    print(f"\n📝 Writing {len(all_games)} rows to Google Sheets…")
-    ws   = get_sheet()
-    COLS = ['school','division','date','time','opponent','home_away',
-            'location','tv','result','espn_team_id','last_updated']
-
-    existing        = ws.get_all_records()
-    scraped_schools = {e['school'] for e in schools}
-    kept            = [r for r in existing
-                       if r.get('SCHOOL', '') not in scraped_schools]
-
-    rows = [[c.upper() for c in COLS]]
-    for r in kept:
-        rows.append([r.get(c.upper(), '') for c in COLS])
-    for g in all_games:
-        rows.append([g.get(c, '') for c in COLS])
-
-    ws.clear()
-    ws.update(values=rows, range_name='A1')   # fixed argument order warning
-    print(f"✅ Done — {len(all_games)} games written.")
+    sheet = get_sheet()
+    write_to_sheet(sheet, all_games)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
