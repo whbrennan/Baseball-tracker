@@ -307,7 +307,7 @@ def _build_game(school, division, date, time_, opponent, home_away,
         "TV":           tv,
         "RESULT":       result,
         "ESPN_TEAM_ID": str(espn_team_id) if espn_team_id else "",
-        "LAST_UPDATED": datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "LAST_UPDATED": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
 
 

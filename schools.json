@@ -134,5 +134,13 @@
     "espn_team_id": "",
     "players": ["Zach Brennan"],
     "notes": ""
+  },
+  {
+    "school": "ECU",
+    "division": "D1",
+    "schedule_url": "https://ecupirates.com/sports/baseball/schedule",
+    "espn_team_id": "2642",
+    "players": ["Grady Lenahan"],
+    "notes": "No year in URL — may need updating each season"
   }
 ]
