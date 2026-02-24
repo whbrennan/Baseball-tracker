@@ -91,6 +91,50 @@ td:first-child,td:nth-child(2),td:nth-child(3){text-align:left;}
 .arc-track{height:8px;background:var(--border);border-radius:4px;overflow:hidden;}
 .arc-fill{height:100%;border-radius:4px;background:var(--green);transition:width .4s;}
 .arc-fill.over{background:var(--gold);}
+
+/* ── DEBUG PANEL ── */
+#debug-panel{display:none;position:fixed;bottom:0;left:0;right:0;z-index:2000;background:#0d1117;border-top:2px solid #f87171;font-family:monospace;font-size:.75rem;max-height:220px;overflow-y:auto;}
+#debug-panel.open{display:block;}
+#debug-header{display:flex;justify-content:space-between;align-items:center;padding:6px 12px;background:#1a0a0a;border-bottom:1px solid #f87171;cursor:pointer;}
+#debug-header span{color:#f87171;font-weight:700;font-size:.78rem;}
+#debug-clear{background:none;border:1px solid #f87171;color:#f87171;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:.7rem;}
+#debug-clear:hover{background:#f87171;color:#000;}
+#debug-log{padding:8px 12px;}
+.dlog{padding:3px 0;border-bottom:1px solid #1e3448;display:grid;grid-template-columns:80px 70px 1fr;gap:8px;}
+.dlog .dt{color:#7a8fa6;}.dlog .lvl-error{color:#f87171;font-weight:700;}.dlog .lvl-warn{color:#f0b429;font-weight:700;}.dlog .lvl-info{color:#34d399;}.dlog .msg{color:#e8edf2;word-break:break-all;}
+/* ── INACTIVE ROSTER ── */
+#inactive-section{margin:32px 16px 40px;border:1px solid var(--border);border-radius:12px;overflow:hidden;}
+#inactive-section.hidden{display:none;}
+.inactive-header{
+  display:flex;align-items:center;justify-content:space-between;
+  background:linear-gradient(90deg,#2a1a0a,var(--dark));
+  border-bottom:2px solid #b45309;
+  padding:12px 18px;cursor:pointer;user-select:none;}
+.inactive-header h2{font-size:.9rem;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:#f97316;}
+.inactive-header .badge{background:#7c2d12;color:#fed7aa;border-radius:20px;padding:3px 10px;font-size:.72rem;font-weight:700;}
+.inactive-header .chevron{color:#f97316;font-size:1rem;transition:transform .2s;}
+.inactive-header.open .chevron{transform:rotate(180deg);}
+.inactive-body{display:none;padding:16px;}
+.inactive-body.open{display:block;}
+.inactive-sub{font-size:.72rem;color:var(--muted);margin-bottom:14px;line-height:1.6;}
+.inactive-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;}
+.inactive-card{
+  background:var(--card);border:1px solid #7c2d12;border-radius:8px;
+  padding:12px 14px;display:flex;flex-direction:column;gap:4px;}
+.inactive-card .ic-name{font-weight:700;font-size:.88rem;color:#fed7aa;}
+.inactive-card .ic-detail{font-size:.72rem;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap;}
+.inactive-card .ic-detail span{display:flex;align-items:center;gap:3px;}
+.inactive-card .ic-type{font-size:.65rem;font-weight:700;padding:1px 6px;border-radius:3px;background:#3a1a0a;color:#f97316;align-self:flex-start;}
+.inactive-table-wrap{overflow-x:auto;margin-top:10px;}
+.inactive-table{width:100%;border-collapse:collapse;font-size:.8rem;min-width:400px;}
+.inactive-table thead tr{background:#2a1a0a;}
+.inactive-table th{padding:8px 12px;text-align:left;color:#f97316;font-size:.7rem;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid #7c2d12;}
+.inactive-table tbody tr{border-bottom:1px solid var(--border);}
+.inactive-table tbody tr:hover{background:rgba(249,115,22,.05);}
+.inactive-table td{padding:8px 12px;color:var(--text);}
+.inactive-table td.dim{color:var(--muted);}
+#inactive-toggle-view{background:none;border:1px solid var(--border);color:var(--muted);border-radius:6px;padding:4px 10px;font-size:.75rem;cursor:pointer;margin-bottom:12px;}
+#inactive-toggle-view:hover{border-color:var(--gold);color:var(--gold);}
 </style>
 </head>
 <body>
@@ -222,6 +266,36 @@ td:first-child,td:nth-child(2),td:nth-child(3){text-align:left;}
   </div>
 </div>
 
+<!-- ── INACTIVE ROSTER (always visible, below all panels) ── -->
+<div id="inactive-section" class="hidden">
+  <div class="inactive-header" id="inactive-toggle" onclick="toggleInactive()">
+    <h2>⚠️ Inactive Roster — 0 Games Played</h2>
+    <div style="display:flex;gap:10px;align-items:center;">
+      <span class="badge" id="inactive-count">0 players</span>
+      <span class="chevron">▼</span>
+    </div>
+  </div>
+  <div class="inactive-body" id="inactive-body">
+    <p class="inactive-sub">
+      The following players are on the roster but have not appeared in a game (G = 0).
+      They are excluded from all stat tables and leaderboards above.
+      Data shown is from the roster sheet — <em>Number</em> and <em>Position</em> will display
+      if those columns exist in your Google Sheet.
+    </p>
+    <button id="inactive-toggle-view" onclick="toggleInactiveView()">Switch to Card View</button>
+    <div id="inactive-render"></div>
+  </div>
+</div>
+
+<!-- ── DEBUG PANEL ── -->
+<div id="debug-panel">
+  <div id="debug-header" onclick="toggleDebug()">
+    <span id="debug-title">🛠 Debug Console — 0 messages</span>
+    <button id="debug-clear" onclick="event.stopPropagation();clearDebug()">Clear</button>
+  </div>
+  <div id="debug-log"></div>
+</div>
+
 <!-- PROFILE MODAL -->
 <div class="modal-overlay" id="modal-overlay" onclick="closeModal(event)">
   <div class="modal">
@@ -234,6 +308,30 @@ td:first-child,td:nth-child(2),td:nth-child(3){text-align:left;}
 </div>
 
 <script>
+// ── DEBUG LOGGER ─────────────────────────────────────────────────────────────
+let debugCount = 0;
+function dbg(msg, level='info') {
+  debugCount++;
+  const panel = document.getElementById('debug-panel');
+  const log   = document.getElementById('debug-log');
+  panel.classList.add('open');
+  document.getElementById('debug-title').textContent = `🛠 Debug Console — ${debugCount} message${debugCount!==1?'s':''}`;
+  const now = new Date().toLocaleTimeString();
+  const row = document.createElement('div');
+  row.className = 'dlog';
+  row.innerHTML = `<span class="dt">${now}</span><span class="lvl-${level}">${level.toUpperCase()}</span><span class="msg">${msg}</span>`;
+  log.prepend(row); // newest on top
+}
+function toggleDebug() {
+  const log = document.getElementById('debug-log');
+  log.style.display = log.style.display === 'none' ? 'block' : 'none';
+}
+function clearDebug() {
+  debugCount = 0;
+  document.getElementById('debug-log').innerHTML = '';
+  document.getElementById('debug-title').textContent = '🛠 Debug Console — 0 messages';
+}
+
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 const SPREADSHEET_ID  = '1vZ9retMliQq99hw2twZ-KtlvLKLOStkcHq73CAx94gs';
 const LOWER_IS_BETTER = new Set(['ERA','WHIP','BB_per_9','E','BB','xFIP','BB_pct','K_pct']);
@@ -251,9 +349,9 @@ const PIT_COLS = ['G','GS','W','L','SV','IP','H','ER','BB','SO','ERA','WHIP','K_
 const DEF_COLS = ['TC','PO','A','E','FLD%','DP','SBA','CSB','PB','CI'];
 const CMP_COLORS = ['#f0b429','#7ec8f7','#b89af7'];
 const DIV_COLORS = { D1:'#7ec8f7', D2:'#b89af7', D3:'#7af7a0', NJCAA:'#f7c07a' };
-
 const BAT_THRESHOLDS = { AVG:.350, OPS:1.000, HR:5, RBI:20, SB:8, ISO:.250 };
 const PIT_THRESHOLDS = { ERA:2.00, WHIP:1.00, K_per_9:10.0, SV:3, K_BB:3.0 };
+
 const isHot = (col, val, type) => {
   const t = type==='batting' ? BAT_THRESHOLDS : PIT_THRESHOLDS;
   const v = parseFloat(val);
@@ -265,6 +363,7 @@ const isHot = (col, val, type) => {
 let batData=[],pitData=[],defData=[],batHistory=[],pitHistory=[];
 let batSort={col:'OPS',dir:-1}, pitSort={col:'ERA',dir:1}, defSort={col:'FLD%',dir:-1};
 let histChart=null, cmpChart=null, sctChart=null, modalChart=null, modalRadar=null;
+let inactiveViewMode = 'table'; // 'table' | 'card'
 
 // ── CSV ───────────────────────────────────────────────────────────────────────
 const csvUrl = s => `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet=${s}`;
@@ -279,22 +378,45 @@ function parseCsv(text) {
   });
 }
 async function fetchSheet(name) {
-  const r = await fetch(csvUrl(name));
-  if (!r.ok) throw new Error(`Failed: ${name}`);
-  return parseCsv(await r.text());
+  const url = csvUrl(name);
+  dbg(`Fetching sheet: <b>${name}</b>`, 'info');
+  let r;
+  try {
+    r = await fetch(url);
+  } catch(e) {
+    dbg(`Network error on <b>${name}</b>: ${e.message} — Is the sheet public? Running on file://?`, 'error');
+    throw e;
+  }
+  if (!r.ok) {
+    dbg(`HTTP ${r.status} on <b>${name}</b>: ${r.statusText} — Check sheet name spelling & sharing settings`, 'error');
+    throw new Error(`HTTP ${r.status}: ${name}`);
+  }
+  const text = await r.text();
+  const rows = parseCsv(text);
+  dbg(`✓ <b>${name}</b> loaded — ${rows.length} rows, columns: ${Object.keys(rows[0]||{}).join(', ')}`, 'info');
+  return rows;
 }
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
 async function init() {
+  dbg(`Page loaded. Spreadsheet ID: <b>${SPREADSHEET_ID}</b>`, 'info');
+  dbg(`Origin: <b>${location.origin}</b> | Protocol: <b>${location.protocol}</b>`, 'info');
+  if (location.protocol === 'file:') {
+    dbg('⚠️ Running over file:// — CORS will block Google Sheets. Use: <b>python3 -m http.server 8000</b>', 'warn');
+  }
   try {
     [batData, pitData, defData] = await Promise.all([
       fetchSheet('Batting'), fetchSheet('Pitching'), fetchSheet('Defense')
     ]);
+    dbg(`Core sheets loaded. Bat:${batData.length} Pit:${pitData.length} Def:${defData.length} rows`, 'info');
     try {
       [batHistory, pitHistory] = await Promise.all([
         fetchSheet('Batting_History'), fetchSheet('Pitching_History')
       ]);
-    } catch(e) { console.warn('History tabs not available yet'); }
+      dbg(`History sheets loaded. BatHist:${batHistory.length} PitHist:${pitHistory.length} rows`, 'info');
+    } catch(e) {
+      dbg(`History tabs not found (optional): ${e.message}`, 'warn');
+    }
     const ts = [...batData,...pitData].map(r=>r.Last_Updated).filter(Boolean).sort().pop();
     document.getElementById('last-updated').textContent = ts ? `Last updated: ${ts}` : 'Stats loaded';
     renderBatting(); renderPitching(); renderDefense();
@@ -302,9 +424,12 @@ async function init() {
     populateCompare(); renderCompare();
     populateScatter(); renderScatter();
     populateHistoryControls();
+    renderInactiveRoster();
+    dbg('✅ All render functions complete.', 'info');
   } catch(e) {
+    dbg(`FATAL init error: ${e.message}`, 'error');
     document.querySelectorAll('.status').forEach(el => {
-      el.innerHTML = `⚠️ Could not load stats.<br><small>${e.message}</small>`;
+      el.innerHTML = `⚠️ Could not load stats.<br><small>${e.message}</small><br><small style="color:#f0b429">Check the debug console at the bottom of the page for details.</small>`;
     });
   }
 }
@@ -318,10 +443,16 @@ function showPanel(name, btn) {
 }
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
+/**
+ * Filter rows for main stat tables.
+ * Excludes players with G = 0 or missing G (they go to the inactive roster).
+ */
 function filterRows(data, divId, searchId) {
   const div = document.getElementById(divId).value;
   const q   = document.getElementById(searchId).value.toLowerCase();
   return data.filter(r => {
+    // Exclude zero-game players from main tables
+    if (parseFloat(r.G) <= 0 || r.G === '' || r.G === undefined) return false;
     return (div==='ALL'||r.Division===div) &&
       (!q||(r.Name||'').toLowerCase().includes(q)||(r.School||'').toLowerCase().includes(q));
   });
@@ -392,6 +523,115 @@ function sortPit(col)     { setSort(pitSort,col); renderPitching(); }
 function renderDefense()  { buildTable(filterRows(defData,'def-div','def-search'),DEF_COLS,defSort,'def-head','def-body','def-status','def-table','sortDef','defense'); }
 function sortDef(col)     { setSort(defSort,col); renderDefense(); }
 
+// ── INACTIVE ROSTER ───────────────────────────────────────────────────────────
+/**
+ * Collects players with G = 0 (or blank) from batting + pitching datasets.
+ * Deduplicates by PlayerID in case a player appears in both.
+ * Displays name, number (#), position, school, division, and roster type.
+ */
+function renderInactiveRoster() {
+  const seen = new Set();
+  const inactive = [];
+
+  const collect = (data, rosterType) => {
+    data.forEach(r => {
+      const g = parseFloat(r.G);
+      if ((isNaN(g) || g <= 0) && !seen.has(r.PlayerID)) {
+        seen.add(r.PlayerID);
+        inactive.push({ ...r, _rosterType: rosterType });
+      }
+    });
+  };
+  collect(batData, 'Batter');
+  collect(pitData, 'Pitcher');
+
+  const sec = document.getElementById('inactive-section');
+  if (!inactive.length) { sec.classList.add('hidden'); return; }
+  sec.classList.remove('hidden');
+
+  document.getElementById('inactive-count').textContent = `${inactive.length} player${inactive.length!==1?'s':''}`;
+  renderInactiveContent(inactive);
+}
+
+function renderInactiveContent(players) {
+  const el = document.getElementById('inactive-render');
+  const btn = document.getElementById('inactive-toggle-view');
+  const sorted = [...players].sort((a,b) => (a.Name||'').localeCompare(b.Name||''));
+
+  if (inactiveViewMode === 'table') {
+    btn.textContent = 'Switch to Card View';
+    // Check which optional columns actually exist in the data
+    const hasNum = sorted.some(r => r.Number || r['#'] || r.Jersey);
+    const hasPos = sorted.some(r => r.Position || r.Pos);
+    const numKey  = sorted[0]?.Number !== undefined ? 'Number' : sorted[0]?.['#'] !== undefined ? '#' : 'Jersey';
+    const posKey  = sorted[0]?.Position !== undefined ? 'Position' : 'Pos';
+
+    el.innerHTML = `
+      <div class="inactive-table-wrap">
+        <table class="inactive-table">
+          <thead><tr>
+            ${hasNum ? `<th>#</th>` : ''}
+            <th>Name</th>
+            ${hasPos ? `<th>Pos</th>` : ''}
+            <th>Type</th>
+            <th>School</th>
+            <th>Div</th>
+          </tr></thead>
+          <tbody>
+            ${sorted.map(r => `<tr>
+              ${hasNum ? `<td class="dim">${r[numKey]||'—'}</td>` : ''}
+              <td style="font-weight:600;color:#fed7aa">${r.Name||'—'}</td>
+              ${hasPos ? `<td class="dim">${r[posKey]||'—'}</td>` : ''}
+              <td><span style="font-size:.65rem;font-weight:700;padding:1px 6px;border-radius:3px;background:#3a1a0a;color:#f97316">${r._rosterType}</span></td>
+              <td class="dim">${shortSchool(r.School)}</td>
+              <td><span class="div-badge ${r.Division||''}">${r.Division||''}</span></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  } else {
+    btn.textContent = 'Switch to Table View';
+    const numKey = sorted[0]?.Number !== undefined ? 'Number' : sorted[0]?.['#'] !== undefined ? '#' : 'Jersey';
+    const posKey = sorted[0]?.Position !== undefined ? 'Position' : 'Pos';
+    el.innerHTML = `<div class="inactive-grid">
+      ${sorted.map(r => {
+        const num  = r[numKey] || r['#'] || r.Jersey || null;
+        const pos  = r[posKey] || r.Pos || null;
+        return `<div class="inactive-card">
+          <span class="ic-type">${r._rosterType}</span>
+          <div class="ic-name">${r.Name||'—'}</div>
+          <div class="ic-detail">
+            ${num  ? `<span>🔢 #${num}</span>`  : ''}
+            ${pos  ? `<span>📍 ${pos}</span>`   : ''}
+            <span>🏫 ${shortSchool(r.School)}</span>
+            <span><span class="div-badge ${r.Division||''}">${r.Division||''}</span></span>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+  }
+}
+
+function toggleInactive() {
+  const hdr  = document.getElementById('inactive-toggle');
+  const body = document.getElementById('inactive-body');
+  hdr.classList.toggle('open');
+  body.classList.toggle('open');
+}
+
+function toggleInactiveView() {
+  inactiveViewMode = inactiveViewMode === 'table' ? 'card' : 'table';
+  // Re-collect and re-render
+  const seen = new Set();
+  const inactive = [];
+  const collect = (data, type) => data.forEach(r => {
+    const g = parseFloat(r.G);
+    if ((isNaN(g)||g<=0) && !seen.has(r.PlayerID)) { seen.add(r.PlayerID); inactive.push({...r,_rosterType:type}); }
+  });
+  collect(batData,'Batter'); collect(pitData,'Pitcher');
+  renderInactiveContent(inactive);
+}
+
 // ── LEADERBOARD ───────────────────────────────────────────────────────────────
 function populateLbStats() {
   const catEl=document.getElementById('lb-cat'), statEl=document.getElementById('lb-stat');
@@ -406,7 +646,8 @@ function renderLeaderboard() {
   const cat=document.getElementById('lb-cat').value, stat=document.getElementById('lb-stat').value;
   const div=document.getElementById('lb-div').value, el=document.getElementById('lb-content');
   const data=cat==='batting'?batData:pitData, asc=LOWER_IS_BETTER.has(stat);
-  const rows=data.filter(r=>(div==='ALL'||r.Division===div)&&parseFloat(r[stat])>0)
+  // Also exclude G=0 from leaderboard
+  const rows=data.filter(r=>(div==='ALL'||r.Division===div)&&parseFloat(r[stat])>0&&parseFloat(r.G)>0)
     .sort((a,b)=>asc?parseFloat(a[stat])-parseFloat(b[stat]):parseFloat(b[stat])-parseFloat(a[stat])).slice(0,10);
   if (!rows.length) { el.innerHTML='<div class="status">No data yet.</div>'; return; }
   el.innerHTML=`<div class="lb-card"><div class="lb-title">${LABELS[stat]||stat} Leaders${div!=='ALL'?' — '+div:''}</div>
@@ -420,16 +661,16 @@ function renderLeaderboard() {
 
 // ── COMPARE ───────────────────────────────────────────────────────────────────
 function populateCompare() {
+  // Only active players in compare dropdowns
   const all=[
-    ...batData.map(r=>({id:r.PlayerID,name:r.Name,type:'batting'})),
-    ...pitData.map(r=>({id:r.PlayerID,name:r.Name,type:'pitching'}))
+    ...batData.filter(r=>parseFloat(r.G)>0).map(r=>({id:r.PlayerID,name:r.Name,type:'batting'})),
+    ...pitData.filter(r=>parseFloat(r.G)>0).map(r=>({id:r.PlayerID,name:r.Name,type:'pitching'}))
   ].sort((a,b)=>a.name.localeCompare(b.name));
   const opts=`<option value="">— none —</option>`+all.map(p=>`<option value="${p.id}|${p.type}">${p.name}</option>`).join('');
   ['cmp-p1','cmp-p2','cmp-p3'].forEach((id,i)=>{
     document.getElementById(id).innerHTML=opts;
     if (i<all.length) document.getElementById(id).value=`${all[i].id}|${all[i].type}`;
   });
-  // Stat options: union of bat+pit cols
   const allCols=[...new Set([...BAT_COLS,...PIT_COLS])];
   document.getElementById('cmp-stat').innerHTML=allCols.map(c=>`<option value="${c}">${LABELS[c]||c}</option>`).join('');
   document.getElementById('cmp-stat').value='OPS';
@@ -440,8 +681,6 @@ function renderCompare() {
   const empty=document.getElementById('cmp-empty');
   const chartBox=document.querySelector('#panel-compare .chart-box');
   if (!pids.length) { chartBox.style.display='none'; empty.style.display=''; return; }
-
-  // Build unified date list
   const allDates=new Set();
   pids.forEach(pv=>{
     const [pid,type]=pv.split('|');
@@ -451,7 +690,6 @@ function renderCompare() {
   const dates=[...allDates].sort();
   if (dates.length<2) { chartBox.style.display='none'; empty.style.display=''; return; }
   chartBox.style.display=''; empty.style.display='none';
-
   const datasets=pids.map((pv,i)=>{
     const [pid,type]=pv.split('|');
     const hist=type==='batting'?batHistory:pitHistory;
@@ -465,7 +703,6 @@ function renderCompare() {
       data:dates.map(d=>dateMap[d]??null)
     };
   });
-
   if (cmpChart) cmpChart.destroy();
   cmpChart=new Chart(document.getElementById('cmp-chart'),{
     type:'line', data:{labels:dates,datasets},
@@ -482,7 +719,7 @@ function populateScatter() {
   const grpEl=document.getElementById('sct-grp');
   const update=()=>{
     const cols=grpEl.value==='batting'?BAT_COLS:PIT_COLS;
-    ['sct-x','sct-y'].forEach((id,i)=>{
+    ['sct-x','sct-y'].forEach(id=>{
       document.getElementById(id).innerHTML=cols.map(c=>`<option value="${c}">${LABELS[c]||c}</option>`).join('');
     });
     document.getElementById('sct-x').value=grpEl.value==='batting'?'OBP':'ERA';
@@ -494,7 +731,8 @@ function populateScatter() {
 function renderScatter() {
   const grp=document.getElementById('sct-grp').value;
   const xCol=document.getElementById('sct-x').value, yCol=document.getElementById('sct-y').value;
-  const data=grp==='batting'?batData:pitData;
+  // Only active players in scatter
+  const data=(grp==='batting'?batData:pitData).filter(r=>parseFloat(r.G)>0);
   const divs=['D1','D2','D3','NJCAA'];
   const datasets=divs.map(div=>({
     label:div,
@@ -503,16 +741,13 @@ function renderScatter() {
     data:data.filter(r=>r.Division===div&&parseFloat(r[xCol])>0&&parseFloat(r[yCol])>0)
       .map(r=>({x:parseFloat(r[xCol]),y:parseFloat(r[yCol]),name:r.Name,pid:r.PlayerID,type:grp}))
   })).filter(d=>d.data.length);
-
   if (sctChart) sctChart.destroy();
   sctChart=new Chart(document.getElementById('sct-chart'),{
     type:'scatter', data:{datasets},
     options:{responsive:true,
-      plugins:{
-        legend:{labels:{color:'#e8edf2'}},
+      plugins:{legend:{labels:{color:'#e8edf2'}},
         tooltip:{backgroundColor:'#162230',borderColor:'#1e3448',borderWidth:1,titleColor:'#f0b429',bodyColor:'#e8edf2',
-          callbacks:{label:ctx=>`${ctx.raw.name}: (${ctx.raw.x}, ${ctx.raw.y})`}},
-      },
+          callbacks:{label:ctx=>`${ctx.raw.name}: (${ctx.raw.x}, ${ctx.raw.y})`}}},
       onClick:(e,els)=>{ if(els.length){const d=datasets[els[0].datasetIndex].data[els[0].index]; openProfile(d.pid,d.type);} },
       scales:{
         x:{title:{display:true,text:LABELS[xCol]||xCol,color:'#7a8fa6'},ticks:{color:'#7a8fa6'},grid:{color:'#1e3448'}},
@@ -525,8 +760,8 @@ function renderScatter() {
 // ── HISTORY ───────────────────────────────────────────────────────────────────
 function populateHistoryControls() {
   const all=[
-    ...batData.map(r=>({id:r.PlayerID,name:r.Name,type:'batting'})),
-    ...pitData.map(r=>({id:r.PlayerID,name:r.Name,type:'pitching'}))
+    ...batData.filter(r=>parseFloat(r.G)>0).map(r=>({id:r.PlayerID,name:r.Name,type:'batting'})),
+    ...pitData.filter(r=>parseFloat(r.G)>0).map(r=>({id:r.PlayerID,name:r.Name,type:'pitching'}))
   ].sort((a,b)=>a.name.localeCompare(b.name));
   document.getElementById('hist-player').innerHTML=all.map(p=>`<option value="${p.id}|${p.type}">${p.name}</option>`).join('');
   updateHistoryStats();
@@ -573,11 +808,8 @@ function openProfile(pid, type) {
   const history=type==='batting'?batHistory:pitHistory;
   const prev=getPrev(history,pid);
   const streak=getStreak(history,pid,type);
-
   document.getElementById('modal-name').textContent=`${player.Name||''}${streak>=3?' 🔥':''}`;
   document.getElementById('modal-sub').textContent=`${player.School||''} · ${player.Division||''} · ${type==='batting'?'Position Player':'Pitcher'}`;
-
-  // Stat grid
   const statCells=cols.map(c=>{
     const hot=isHot(c,player[c],type);
     const arrow=trendArrow(c,player[c],prev);
@@ -586,8 +818,6 @@ function openProfile(pid, type) {
       <div class="stat-value ${hot?'hot-val':''}">${player[c]||'—'}${arrow}</div>
     </div>`;
   }).join('');
-
-  // Season arc progress bars
   const thresholds=type==='batting'?BAT_THRESHOLDS:PIT_THRESHOLDS;
   const arcBars=Object.entries(thresholds).map(([col,target])=>{
     const v=parseFloat(player[col])||0;
@@ -600,8 +830,6 @@ function openProfile(pid, type) {
       <div class="arc-track"><div class="arc-fill ${over?'over':''}" style="width:${pct}%"></div></div>
     </div>`;
   }).join('');
-
-  // Radar data — percentile vs group
   const radarCols = type==='batting'
     ? ['AVG','OBP','SLG','ISO','BB_pct','K_pct']
     : ['K_per_9','K_BB','ERA','WHIP','xFIP','BB_pct'];
@@ -610,12 +838,10 @@ function openProfile(pid, type) {
     const allVals=data.map(r=>parseFloat(r[c])||0);
     return getPercentile(player[c],allVals,LOWER_IS_BETTER.has(c));
   });
-
   const hasHistory=history.filter(r=>r.PlayerID===pid&&parseFloat(r[cols[0]])>0).length>=2;
   const defaultStat=type==='batting'?'AVG':'ERA';
   const histRows=history.filter(r=>r.PlayerID===pid&&r[defaultStat]!==''&&r[defaultStat]!=='0')
     .sort((a,b)=>a.Last_Updated.localeCompare(b.Last_Updated));
-
   document.getElementById('modal-body').innerHTML=`
     <div class="modal-section-title">Season Stats</div>
     <div class="stat-grid">${statCells}</div>
@@ -631,13 +857,9 @@ function openProfile(pid, type) {
         <div class="modal-chart-wrap"><canvas id="modal-chart"></canvas></div>
       </div>`:''}
     </div>`;
-
   document.getElementById('modal-overlay').classList.add('open');
-
-  // Destroy previous charts
   if (modalRadar) { modalRadar.destroy(); modalRadar=null; }
   if (modalChart) { modalChart.destroy(); modalChart=null; }
-
   setTimeout(()=>{
     modalRadar=new Chart(document.getElementById('modal-radar'),{
       type:'radar',
@@ -652,7 +874,6 @@ function openProfile(pid, type) {
         pointLabels:{color:'#e8edf2',font:{size:11}}
       }},plugins:{legend:{labels:{color:'#e8edf2',font:{size:11}}}}}
     });
-
     if (hasHistory) {
       modalChart=new Chart(document.getElementById('modal-chart'),{
         type:'line',
