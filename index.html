@@ -163,7 +163,16 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* ── SECTION HEADERS ── */
+  .chart-wrap {
+    padding: 16px; max-width: 900px; margin: 0 auto;
+  }
+  .chart-box {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 20px;
+  }
+  #history-empty {
+    text-align: center; padding: 40px; color: var(--muted);
+  }
   .section-label {
     padding: 6px 16px 2px;
     font-size: .7rem; color: var(--muted);
@@ -172,6 +181,7 @@
   .panel { display: none; }
   .panel.active { display: block; }
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
 <body>
 
@@ -184,6 +194,7 @@
   <button class="active" onclick="showPanel('batting')">⚾ Batting</button>
   <button onclick="showPanel('pitching')">🥎 Pitching</button>
   <button onclick="showPanel('leaderboard')">🏆 Leaderboard</button>
+  <button onclick="showPanel('history')">📈 History</button>
 </nav>
 
 <!-- BATTING PANEL -->
@@ -280,7 +291,27 @@
   </div>
 </div>
 
-<script>
+<!-- HISTORY PANEL -->
+<div id="panel-history" class="panel">
+  <div class="controls">
+    <div>
+      <label>Player</label>
+      <select id="hist-player" onchange="renderHistory()"></select>
+    </div>
+    <div>
+      <label>Stat</label>
+      <select id="hist-stat" onchange="renderHistory()"></select>
+    </div>
+  </div>
+  <div class="chart-wrap">
+    <div class="chart-box">
+      <canvas id="hist-chart"></canvas>
+    </div>
+    <div id="history-empty" style="display:none">
+      No history data yet for this player — check back after the next scrape run.
+    </div>
+  </div>
+</div>
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 const SPREADSHEET_ID = 1vZ9retMliQq99hw2twZ-KtlvLKLOStkcHq73CAx94gs;
 
@@ -301,9 +332,8 @@ const BAT_COLS = ['G','AB','R','H','2B','3B','HR','RBI','BB','SO','AVG','OBP','S
 const PIT_COLS = ['G','GS','W','L','SV','IP','H','ER','BB','SO','ERA','WHIP','K_per_9','BB_per_9','K_BB','xFIP'];
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
-let batData = [], pitData = [];
-let batSort = { col: 'OPS', dir: -1 };
-let pitSort = { col: 'ERA', dir:  1 };
+let batHistory = [], pitHistory = [];
+let histChart  = null;
 
 // ── CSV FETCH ─────────────────────────────────────────────────────────────────
 function csvUrl(sheet) {
@@ -332,9 +362,11 @@ async function fetchSheet(name) {
 // ── INIT ──────────────────────────────────────────────────────────────────────
 async function init() {
   try {
-    [batData, pitData] = await Promise.all([
+    [batData, pitData, batHistory, pitHistory] = await Promise.all([
       fetchSheet('Batting'),
-      fetchSheet('Pitching')
+      fetchSheet('Pitching'),
+      fetchSheet('Batting_History'),
+      fetchSheet('Pitching_History')
     ]);
     // Set last-updated from most recent timestamp
     const ts = [...batData, ...pitData]
@@ -346,6 +378,7 @@ async function init() {
     renderPitching();
     populateLbStats();
     renderLeaderboard();
+    populateHistoryControls();
   } catch(e) {
     document.querySelectorAll('.status').forEach(el => {
       el.innerHTML = `⚠️ Could not load stats.<br><small>${e.message}</small>`;
@@ -504,7 +537,102 @@ function renderLeaderboard() {
     </div>`;
 }
 
-init();
+// ── HISTORY ───────────────────────────────────────────────────────────────────
+function populateHistoryControls() {
+  // Build player list from both hitter and pitcher rosters
+  const players = [
+    ...batData.map(r => ({ id: r.PlayerID, name: r.Name, type: 'batting' })),
+    ...pitData.map(r => ({ id: r.PlayerID, name: r.Name, type: 'pitching' }))
+  ].sort((a, b) => a.name.localeCompare(b.name));
+
+  const playerEl = document.getElementById('hist-player');
+  playerEl.innerHTML = players.map(p =>
+    `<option value="${p.id}|${p.type}">${p.name}</option>`
+  ).join('');
+
+  playerEl.addEventListener('change', updateHistoryStats);
+  updateHistoryStats();
+}
+
+function updateHistoryStats() {
+  const [, type] = document.getElementById('hist-player').value.split('|');
+  const cols = type === 'batting' ? BAT_COLS : PIT_COLS;
+  const statEl = document.getElementById('hist-stat');
+  statEl.innerHTML = cols.map(c =>
+    `<option value="${c}">${LABELS[c] || c}</option>`
+  ).join('');
+  // Sensible defaults
+  statEl.value = type === 'batting' ? 'AVG' : 'ERA';
+  renderHistory();
+}
+
+function renderHistory() {
+  const [pid, type] = document.getElementById('hist-player').value.split('|');
+  const stat        = document.getElementById('hist-stat').value;
+  const history     = type === 'batting' ? batHistory : pitHistory;
+  const empty       = document.getElementById('history-empty');
+  const chartBox    = document.querySelector('.chart-box');
+
+  // Filter to this player and sort by date
+  const rows = history
+    .filter(r => r.PlayerID === pid && r[stat] !== '' && r[stat] !== '0')
+    .sort((a, b) => a.Last_Updated.localeCompare(b.Last_Updated));
+
+  if (rows.length < 2) {
+    chartBox.style.display = 'none';
+    empty.style.display    = '';
+    return;
+  }
+  chartBox.style.display = '';
+  empty.style.display    = 'none';
+
+  const labels = rows.map(r => r.Last_Updated.split(' ')[0]);
+  const values = rows.map(r => parseFloat(r[stat]) || 0);
+  const name   = rows[0].Name;
+
+  if (histChart) histChart.destroy();
+
+  histChart = new Chart(document.getElementById('hist-chart'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: `${name} — ${LABELS[stat] || stat}`,
+        data: values,
+        borderColor:     '#1a7a3c',
+        backgroundColor: 'rgba(26,122,60,0.15)',
+        pointBackgroundColor: '#f0b429',
+        pointRadius: 5,
+        pointHoverRadius: 7,
+        tension: 0.3,
+        fill: true,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { labels: { color: '#e8edf2', font: { size: 13 } } },
+        tooltip: {
+          backgroundColor: '#162230',
+          borderColor: '#1e3448',
+          borderWidth: 1,
+          titleColor: '#f0b429',
+          bodyColor: '#e8edf2',
+        }
+      },
+      scales: {
+        x: {
+          ticks: { color: '#7a8fa6', maxRotation: 45 },
+          grid:  { color: '#1e3448' }
+        },
+        y: {
+          ticks: { color: '#7a8fa6' },
+          grid:  { color: '#1e3448' }
+        }
+      }
+    }
+  });
+}
 </script>
 </body>
 </html>

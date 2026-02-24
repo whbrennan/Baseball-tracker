@@ -248,15 +248,17 @@ def main(test_player_id=None):
             print(f"→ {player['Name']} ({player['School']}) Jersey #{player.get('Jersey','')}")
             try:
                 if player["Type"] == "Hitter":
-                    for stat_type, tab, cols in [
-                        ("batting", "Batting", BATTING_COLS),
-                        ("defense", "Defense", DEFENSE_COLS),
+                    for stat_type, tab, hist_tab, cols in [
+                        ("batting", "Batting", "Batting_History", BATTING_COLS),
+                        ("defense", "Defense", "Defense_History", DEFENSE_COLS),
                     ]:
                         s = scrape(page, player, stat_type)
                         write_stats(sheet, tab, player, s, cols)
+                        write_history(sheet, hist_tab, player, s, cols)
                 else:
                     s = scrape(page, player, "pitching")
                     write_stats(sheet, "Pitching", player, s, PITCHING_COLS)
+                    write_history(sheet, "Pitching_History", player, s, PITCHING_COLS)
 
                 log(sheet, player, "SUCCESS")
 
@@ -270,5 +272,5 @@ def main(test_player_id=None):
 
 # ── ENTRY POINT ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    # Change "P001" to any PlayerID, or use     main() to run all 18
-    main()
+    # Change "P001" to any PlayerID. test_player_id="P001",  or use     main() to run all 18
+    main(test_player_id="P001")
