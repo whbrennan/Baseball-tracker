@@ -122,8 +122,6 @@ td:first-child,td:nth-child(2),td:nth-child(3){text-align:left;}
   </div>
   <div class="legend">
     <span><span class="leg-hot"></span>Elite performance</span>
-    <span><span style="color:var(--up);font-weight:700">▲</span>Trending up</span>
-    <span><span style="color:var(--down);font-weight:700">▼</span>Trending down</span>
     <span>🔥 Hot streak (3+ consecutive improvements)</span>
   </div>
   <div class="table-wrap">
@@ -144,8 +142,6 @@ td:first-child,td:nth-child(2),td:nth-child(3){text-align:left;}
   </div>
   <div class="legend">
     <span><span class="leg-hot"></span>Elite performance</span>
-    <span><span style="color:var(--up);font-weight:700">▲</span>Trending up</span>
-    <span><span style="color:var(--down);font-weight:700">▼</span>Trending down</span>
     <span>🔥 Hot streak</span>
   </div>
   <div class="table-wrap">
@@ -340,13 +336,7 @@ function getPrev(history, pid) {
   const rows = history.filter(r=>r.PlayerID===pid).sort((a,b)=>b.Last_Updated.localeCompare(a.Last_Updated));
   return rows.length>=2 ? rows[1] : null;
 }
-function trendArrow(col, curr, prev) {
-  if (!prev) return '';
-  const c=parseFloat(curr), p=parseFloat(prev[col]);
-  if (isNaN(c)||isNaN(p)||c===p) return '<span class="trend-same">—</span>';
-  const good = LOWER_IS_BETTER.has(col) ? c<p : c>p;
-  return good ? '<span class="trend-up">▲</span>' : '<span class="trend-down">▼</span>';
-}
+function trendArrow() { return ''; }
 function getStreak(history, pid, type) {
   const stat = type==='batting'?'OPS':'ERA';
   const rows = history.filter(r=>r.PlayerID===pid&&parseFloat(r[stat])>0)
