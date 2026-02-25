@@ -142,5 +142,13 @@
     "espn_team_id": "2642",
     "players": ["Grady Lenahan"],
     "notes": "No year in URL — may need updating each season"
+  },
+  {
+  "school": "Marymount",
+  "division": "D3",
+  "schedule_url": "https://marymountsaints.com/sports/baseball/schedule",
+  "espn_team_id": "",
+  "players": ["Shane Howie", "Brett Triplett"],
+  "notes": "No year in URL — may need updating each season"
   }
 ]

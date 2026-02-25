@@ -251,6 +251,17 @@ def scrape(page, player, stat_type):
     page.goto(player["Stats_URL"], wait_until="domcontentloaded", timeout=60000)
     time.sleep(5)
 
+    if stat_type == "defense":
+        try:
+            trigger = page.locator("button.s-select-box", has_text="Batting").first
+            trigger.click(timeout=5000)
+            time.sleep(1)
+            fielding = page.locator("li.s-select__option-item", has_text="Fielding").first
+            fielding.click(timeout=5000)
+            time.sleep(2)
+        except Exception:
+            pass  # If dropdown not found, fall through to standard table detection
+
     col_map = {"batting": BATTING_MAP, "pitching": PITCHING_MAP, "defense": DEFENSE_MAP}[stat_type]
     table, hdrs = find_table(page, stat_type)
     if not table:
