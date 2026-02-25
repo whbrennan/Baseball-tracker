@@ -677,8 +677,10 @@ function filterRows(data, divId, searchId) {
 function filterDefenseRows(divId, searchId) {
   const div = document.getElementById(divId).value;
   const q   = document.getElementById(searchId).value.toLowerCase();
+  // Only apply G filter if the defense sheet actually has a G column
+  const defHasG = defData.length > 0 && defData[0].G !== undefined;
   return defData.filter(r =>
-    hasGames(r) &&
+    (!defHasG || hasGames(r)) &&
     (div === 'ALL' || r.Division === div) &&
     (!q || (r.Name||'').toLowerCase().includes(q) || (r.School||'').toLowerCase().includes(q))
   );
