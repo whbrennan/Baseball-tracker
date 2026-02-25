@@ -677,10 +677,12 @@ function filterRows(data, divId, searchId) {
 function filterDefenseRows(divId, searchId) {
   const div = document.getElementById(divId).value;
   const q   = document.getElementById(searchId).value.toLowerCase();
-  // Only apply G filter if the defense sheet actually has a G column
+  // Filter out players with no meaningful defensive stats
+  const hasDefStats = r => DEF_COLS.some(c => parseFloat(r[c]) > 0);
+  // Also apply G filter if the defense sheet has a G column
   const defHasG = defData.length > 0 && defData[0].G !== undefined;
   return defData.filter(r =>
-    (!defHasG || hasGames(r)) &&
+    hasDefStats(r) && (!defHasG || hasGames(r)) &&
     (div === 'ALL' || r.Division === div) &&
     (!q || (r.Name||'').toLowerCase().includes(q) || (r.School||'').toLowerCase().includes(q))
   );
