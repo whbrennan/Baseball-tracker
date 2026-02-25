@@ -407,7 +407,6 @@ let todayRefreshTimer = null;
 // ── TODAY'S GAMES CONFIG ───────────────────────────────────────────────────────
 const ESPN_SCOREBOARD = 'https://site.api.espn.com/apis/site/v2/sports/baseball/college-baseball/scoreboard';
 
-// Built from schools.json players arrays — school → [players]
 const SCHOOL_PLAYERS = {
   'East Tennessee State':      ['Tyler Fetterman'],
   'Maryland':                  ['David Mendez'],
@@ -442,7 +441,6 @@ function parseCsv(text) {
     return obj;
   });
 }
-// Minimal CSV parser used by Today's Games (handles quoted fields robustly)
 function parseCsvFull(text) {
   const rows = [];
   for (const line of text.split(/\r?\n/)) {
@@ -511,7 +509,6 @@ function showPanel(name, btn) {
   document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
   document.getElementById('panel-'+name).classList.add('active');
   btn.classList.add('active');
-  // Today's Games: start/stop auto-refresh
   if (name === 'today') {
     loadTodayGames();
     clearInterval(todayRefreshTimer);
@@ -527,7 +524,7 @@ async function loadTodayGames(manual = false) {
     document.getElementById('today-games-container').innerHTML =
       '<div class="status"><div class="spinner"></div><br>Refreshing…</div>';
   }
-  const todayStr = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const todayStr = new Date().toISOString().slice(0, 10);
   try {
     const [games, espnScores] = await Promise.all([
       fetchTodaySchedule(todayStr),
@@ -608,8 +605,6 @@ function renderTodayGames(games, espnScores) {
       : '<span class="badge-away">AWAY</span>';
     const tvBadge  = g.tv ? `<span class="badge-tv">${g.tv}</span>` : '';
     const divBadge = `<span class="badge-div">${g.division}</span>`;
-
-    // Score block: live ESPN → existing result → nothing
     let scoreBlock = '';
     const live = g.espnTeamId ? espnScores[g.espnTeamId] : null;
     if (live) {
@@ -632,11 +627,9 @@ function renderTodayGames(games, espnScores) {
           <span class="game-score-status ${wl}">Final</span>
         </div>`;
     }
-
     const playerLine = players.length
       ? `<div class="game-players">👤 ${players.join(' · ')}</div>`
       : '';
-
     return `
       <div class="game-card">
         <div class="game-card-top">
@@ -663,15 +656,34 @@ function sortTime(t) {
 }
 
 // ── HELPERS ────────────────────────────────────────────────────────────────────
+
+// Returns true if the row has at least 1 game played
+const hasGames = r => {
+  const g = parseFloat(r.G);
+  return !isNaN(g) && g > 0;
+};
+
 function filterRows(data, divId, searchId) {
   const div = document.getElementById(divId).value;
   const q   = document.getElementById(searchId).value.toLowerCase();
-  return data.filter(r => {
-    if (parseFloat(r.G) <= 0 || r.G === '' || r.G === undefined) return false;
-    return (div==='ALL'||r.Division===div) &&
-      (!q||(r.Name||'').toLowerCase().includes(q)||(r.School||'').toLowerCase().includes(q));
-  });
+  return data.filter(r =>
+    hasGames(r) &&
+    (div === 'ALL' || r.Division === div) &&
+    (!q || (r.Name||'').toLowerCase().includes(q) || (r.School||'').toLowerCase().includes(q))
+  );
 }
+
+// Defense shares the same G-filter via filterRows
+function filterDefenseRows(divId, searchId) {
+  const div = document.getElementById(divId).value;
+  const q   = document.getElementById(searchId).value.toLowerCase();
+  return defData.filter(r =>
+    hasGames(r) &&
+    (div === 'ALL' || r.Division === div) &&
+    (!q || (r.Name||'').toLowerCase().includes(q) || (r.School||'').toLowerCase().includes(q))
+  );
+}
+
 function sortRows(rows, col, dir) {
   return [...rows].sort((a,b) => ((parseFloat(b[col])||0)-(parseFloat(a[col])||0))*dir);
 }
@@ -735,23 +747,14 @@ function renderBatting()  { buildTable(filterRows(batData,'bat-div','bat-search'
 function sortBat(col)     { setSort(batSort,col); renderBatting(); }
 function renderPitching() { buildTable(filterRows(pitData,'pit-div','pit-search'),PIT_COLS,pitSort,'pit-head','pit-body','pit-status','pit-table','sortPit','pitching'); }
 function sortPit(col)     { setSort(pitSort,col); renderPitching(); }
-function renderDefense() {
-  const div = document.getElementById('def-div').value;
-  const q   = document.getElementById('def-search').value.toLowerCase();
-  const rows = defData.filter(r =>
-    (div === 'ALL' || r.Division === div) &&
-    (!q || (r.Name||'').toLowerCase().includes(q) || (r.School||'').toLowerCase().includes(q))
-  );
-  buildTable(rows, DEF_COLS, defSort, 'def-head', 'def-body', 'def-status', 'def-table', 'sortDef', 'defense');
-}
+function renderDefense()  { buildTable(filterDefenseRows('def-div','def-search'),DEF_COLS,defSort,'def-head','def-body','def-status','def-table','sortDef','defense'); }
 function sortDef(col)     { setSort(defSort,col); renderDefense(); }
 
 // ── INACTIVE ROSTER ────────────────────────────────────────────────────────────
 function renderInactiveRoster() {
   const seen=new Set(), inactive=[];
   const collect=(data,rosterType)=>data.forEach(r=>{
-    const g=parseFloat(r.G);
-    if((isNaN(g)||g<=0)&&!seen.has(r.PlayerID)){seen.add(r.PlayerID);inactive.push({...r,_rosterType:rosterType});}
+    if(!hasGames(r)&&!seen.has(r.PlayerID)){seen.add(r.PlayerID);inactive.push({...r,_rosterType:rosterType});}
   });
   collect(batData,'Batter'); collect(pitData,'Pitcher');
   const sec=document.getElementById('inactive-section');
@@ -806,7 +809,7 @@ function toggleInactive() {
 function toggleInactiveView() {
   inactiveViewMode=inactiveViewMode==='table'?'card':'table';
   const seen=new Set(),inactive=[];
-  const collect=(data,type)=>data.forEach(r=>{const g=parseFloat(r.G);if((isNaN(g)||g<=0)&&!seen.has(r.PlayerID)){seen.add(r.PlayerID);inactive.push({...r,_rosterType:type});}});
+  const collect=(data,type)=>data.forEach(r=>{if(!hasGames(r)&&!seen.has(r.PlayerID)){seen.add(r.PlayerID);inactive.push({...r,_rosterType:type});}});
   collect(batData,'Batter');collect(pitData,'Pitcher');
   renderInactiveContent(inactive);
 }
@@ -825,7 +828,7 @@ function renderLeaderboard() {
   const cat=document.getElementById('lb-cat').value,stat=document.getElementById('lb-stat').value;
   const div=document.getElementById('lb-div').value,el=document.getElementById('lb-content');
   const data=cat==='batting'?batData:pitData,asc=LOWER_IS_BETTER.has(stat);
-  const rows=data.filter(r=>(div==='ALL'||r.Division===div)&&parseFloat(r[stat])>0&&parseFloat(r.G)>0)
+  const rows=data.filter(r=>(div==='ALL'||r.Division===div)&&parseFloat(r[stat])>0&&hasGames(r))
     .sort((a,b)=>asc?parseFloat(a[stat])-parseFloat(b[stat]):parseFloat(b[stat])-parseFloat(a[stat])).slice(0,10);
   if(!rows.length){el.innerHTML='<div class="status">No data yet.</div>';return;}
   el.innerHTML=`<div class="lb-card"><div class="lb-title">${LABELS[stat]||stat} Leaders${div!=='ALL'?' — '+div:''}</div>
@@ -840,8 +843,8 @@ function renderLeaderboard() {
 // ── COMPARE ────────────────────────────────────────────────────────────────────
 function populateCompare() {
   const all=[
-    ...batData.filter(r=>parseFloat(r.G)>0).map(r=>({id:r.PlayerID,name:r.Name,type:'batting'})),
-    ...pitData.filter(r=>parseFloat(r.G)>0).map(r=>({id:r.PlayerID,name:r.Name,type:'pitching'}))
+    ...batData.filter(hasGames).map(r=>({id:r.PlayerID,name:r.Name,type:'batting'})),
+    ...pitData.filter(hasGames).map(r=>({id:r.PlayerID,name:r.Name,type:'pitching'}))
   ].sort((a,b)=>a.name.localeCompare(b.name));
   const opts=`<option value="">— none —</option>`+all.map(p=>`<option value="${p.id}|${p.type}">${p.name}</option>`).join('');
   ['cmp-p1','cmp-p2','cmp-p3'].forEach((id,i)=>{
@@ -900,7 +903,7 @@ function populateScatter() {
 function renderScatter() {
   const grp=document.getElementById('sct-grp').value;
   const xCol=document.getElementById('sct-x').value,yCol=document.getElementById('sct-y').value;
-  const data=(grp==='batting'?batData:pitData).filter(r=>parseFloat(r.G)>0);
+  const data=(grp==='batting'?batData:pitData).filter(hasGames);
   const divs=['D1','D2','D3','NJCAA'];
   const datasets=divs.map(div=>({label:div,backgroundColor:DIV_COLORS[div]+'cc',pointRadius:7,pointHoverRadius:9,
     data:data.filter(r=>r.Division===div&&parseFloat(r[xCol])>0&&parseFloat(r[yCol])>0)
@@ -921,8 +924,8 @@ function renderScatter() {
 // ── HISTORY ────────────────────────────────────────────────────────────────────
 function populateHistoryControls() {
   const all=[
-    ...batData.filter(r=>parseFloat(r.G)>0).map(r=>({id:r.PlayerID,name:r.Name,type:'batting'})),
-    ...pitData.filter(r=>parseFloat(r.G)>0).map(r=>({id:r.PlayerID,name:r.Name,type:'pitching'}))
+    ...batData.filter(hasGames).map(r=>({id:r.PlayerID,name:r.Name,type:'batting'})),
+    ...pitData.filter(hasGames).map(r=>({id:r.PlayerID,name:r.Name,type:'pitching'}))
   ].sort((a,b)=>a.name.localeCompare(b.name));
   document.getElementById('hist-player').innerHTML=all.map(p=>`<option value="${p.id}|${p.type}">${p.name}</option>`).join('');
   updateHistoryStats();
@@ -987,7 +990,7 @@ function openProfile(pid, type) {
   const radarCols=type==='batting'?['AVG','OBP','SLG','ISO','BB_pct','K_pct']:['K_per_9','K_BB','ERA','WHIP','xFIP','BB_pct'];
   const radarLabels=radarCols.map(c=>LABELS[c]||c);
   const radarData=radarCols.map(c=>{
-    const allVals=data.map(r=>parseFloat(r[c])||0);
+    const allVals=data.filter(hasGames).map(r=>parseFloat(r[c])||0);
     return getPercentile(player[c],allVals,LOWER_IS_BETTER.has(c));
   });
   const defaultStat=type==='batting'?'AVG':'ERA';
