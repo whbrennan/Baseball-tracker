@@ -346,7 +346,7 @@ def main(test_player_id=None):
                         old_row = write_stats(sheet, tab, player, s, cols)
                         write_history(sheet, hist, player, s, cols)
                         if st == "batting":
-                            if old_row and is_zero_row(old_row, BATTING_COLS) and not is_zero_row(s, BATTING_COLS):
+                            if (old_row is None or is_zero_row(old_row, BATTING_COLS)) and not is_zero_row(s, BATTING_COLS):
                                 push(
                                     f"⚾ {player['Name']} has arrived!",
                                     f"{player['School']} ({player['Division']})\n"
@@ -358,7 +358,7 @@ def main(test_player_id=None):
                     s       = scrape(page, player, "pitching")
                     old_row = write_stats(sheet, "Pitching", player, s, PITCHING_COLS)
                     write_history(sheet, "Pitching_History", player, s, PITCHING_COLS)
-                    if old_row and is_zero_row(old_row, PITCHING_COLS) and not is_zero_row(s, PITCHING_COLS):
+                    if (old_row is None or is_zero_row(old_row, PITCHING_COLS)) and not is_zero_row(s, PITCHING_COLS):
                         push(
                             f"🥎 {player['Name']} has arrived!",
                             f"{player['School']} ({player['Division']})\n"
