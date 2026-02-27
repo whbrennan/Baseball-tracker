@@ -2,10 +2,8 @@ name: Baseball Stats Scraper
 
 on:
   schedule:
-    # 11pm EDT every day (Mon-Sun) = 3am UTC
-    - cron: '0 3 * * *'
-    # 6pm EDT on Fri, Sat, Sun = 10pm UTC
-    - cron: '0 22 * * 5,6,0'
+  # Every 2 hours, 12pm–12am EDT (Mon–Sun) = 4pm–4am UTC
+    - cron: '0 16,18,20,22,0,2 * * *'
   workflow_dispatch:  # allows manual trigger from GitHub anytime
 
 jobs:
