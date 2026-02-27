@@ -22,7 +22,7 @@ from google.oauth2.service_account import Credentials
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-SPREADSHEET_ID = "1vZ9retMliQq99hw2twZ-KtlvLKLOStkcHq73CAx94gs"
+SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")
 SHEET_NAME     = "Schedule"
 SCHOOLS_FILE   = "schools.json"
 CURRENT_YEAR   = datetime.now().year

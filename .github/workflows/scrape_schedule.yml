@@ -28,6 +28,7 @@ jobs:
       - name: Run schedule scraper
         env:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
         run: |
           python3 scrape_schedule.py
 
