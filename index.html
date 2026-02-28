@@ -725,7 +725,6 @@ async function loadTodayPerformances() {
   document.getElementById('perf-date').textContent =
     new Date().toLocaleDateString([], { weekday:'short', month:'short', day:'numeric' });
 
-  // Show spinners while loading
   ['perf-pit','perf-bat','perf-def'].forEach(id => {
     document.getElementById(`${id}-status`).innerHTML = '<div class="spinner"></div><br>Loading…';
     document.getElementById(`${id}-status`).style.display = '';
@@ -734,9 +733,10 @@ async function loadTodayPerformances() {
 
   const today = new Date().toISOString().slice(0, 10);
   let todayBatHist = [], todayPitHist = [], todayDefHist = [];
+  let bh = [], ph = [], dh = [];
 
   try {
-    const [bh, ph, dh] = await Promise.all([
+    [bh, ph, dh] = await Promise.all([
       fetchSheet('Batting_History'),
       fetchSheet('Pitching_History'),
       fetchSheet('Defense_History'),
@@ -748,17 +748,59 @@ async function loadTodayPerformances() {
     dbg(`Performances load error: ${e.message}`, 'warn');
   }
 
-  renderPerfTable(todayPitHist, PERF_PIT_COLS, 'perf-pit-head', 'perf-pit-body', 'perf-pit-status', 'perf-pit-table', 'pitching');
-  renderPerfTable(todayBatHist, PERF_BAT_COLS, 'perf-bat-head', 'perf-bat-body', 'perf-bat-status', 'perf-bat-table', 'batting');
-  renderPerfTable(todayDefHist, PERF_DEF_COLS, 'perf-def-head', 'perf-def-body', 'perf-def-status', 'perf-def-table', 'defense');
+  renderPerfTable(todayPitHist, ph, PERF_PIT_COLS, 'perf-pit-head', 'perf-pit-body', 'perf-pit-status', 'perf-pit-table', 'pitching');
+  renderPerfTable(todayBatHist, bh, PERF_BAT_COLS, 'perf-bat-head', 'perf-bat-body', 'perf-bat-status', 'perf-bat-table', 'batting');
+  renderPerfTable(todayDefHist, dh, PERF_DEF_COLS, 'perf-def-head', 'perf-def-body', 'perf-def-status', 'perf-def-table', 'defense');
 }
 
-function renderPerfTable(rows, cols, headId, bodyId, statusId, tableId, type) {
+const RATE_STATS = new Set(['AVG','OBP','SLG','OPS','ISO','BABIP','ERA','WHIP',
+                             'K_per_9','BB_per_9','K_BB','xFIP','BB_pct','K_pct','FLD%']);
+
+function getDelta(todayRow, prevRow, cols) {
+  const delta = { ...todayRow };
+  cols.forEach(c => {
+    if (RATE_STATS.has(c)) {
+      delta[c] = todayRow[c]; // show current rate, not a difference
+    } else {
+      const diff = (parseFloat(todayRow[c]) || 0) - (parseFloat(prevRow?.[c]) || 0);
+      delta[c] = diff > 0 ? String(diff) : '—';
+    }
+  });
+  return delta;
+}
+
+function renderPerfTable(todayRows, allHistory, cols, headId, bodyId, statusId, tableId, type) {
   const statusEl = document.getElementById(statusId);
   const tableEl  = document.getElementById(tableId);
 
-  if (!rows.length) {
+  if (!todayRows.length) {
     statusEl.innerHTML = 'No data scraped today yet.';
+    statusEl.style.display = '';
+    tableEl.style.display = 'none';
+    return;
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  // For each player, get their latest row from today and their last row before today
+  const latestToday = {};
+  todayRows.forEach(r => {
+    if (!latestToday[r.PlayerID] || r.Last_Updated > latestToday[r.PlayerID].Last_Updated)
+      latestToday[r.PlayerID] = r;
+  });
+
+  const rows = Object.values(latestToday).map(r => {
+    const prevRow = allHistory
+      .filter(h => h.PlayerID === r.PlayerID && !(h.Last_Updated || '').startsWith(today))
+      .sort((a, b) => b.Last_Updated.localeCompare(a.Last_Updated))[0] || null;
+    return { row: r, delta: getDelta(r, prevRow, cols) };
+  }).filter(({ delta }) =>
+    // Only show players who have at least one counting stat change today
+    cols.some(c => !RATE_STATS.has(c) && delta[c] && delta[c] !== '—')
+  );
+
+  if (!rows.length) {
+    statusEl.innerHTML = 'No activity yet today.';
     statusEl.style.display = '';
     tableEl.style.display = 'none';
     return;
@@ -771,29 +813,19 @@ function renderPerfTable(rows, cols, headId, bodyId, statusId, tableId, type) {
     `<th>Player</th><th>School</th><th>Div</th>` +
     cols.map(c => `<th>${LABELS[c] || c}</th>`).join('');
 
-  // If a player was scraped multiple times today, show only their latest snapshot
-  const latestByPlayer = {};
-  rows.forEach(r => {
-    const pid = r.PlayerID;
-    if (!latestByPlayer[pid] || r.Last_Updated > latestByPlayer[pid].Last_Updated) {
-      latestByPlayer[pid] = r;
-    }
-  });
-
-  document.getElementById(bodyId).innerHTML =
-    Object.values(latestByPlayer).map(r => {
-      const hotRow = cols.some(c => isHot(c, r[c], type));
-      const cells = cols.map(c => {
-        const hot = isHot(c, r[c], type);
-        return `<td class="${hot ? 'hot-val' : ''}">${r[c] || '—'}</td>`;
-      }).join('');
-      return `<tr class="${hotRow ? 'hot-row' : ''}">
-        <td><span class="player-link" onclick="openProfile('${r.PlayerID}','${type}')">${r.Name || ''}</span></td>
-        <td style="font-size:.78rem;color:var(--muted)">${shortSchool(r.School)}</td>
-        <td><span class="div-badge ${r.Division || ''}">${r.Division || ''}</span></td>
-        ${cells}
-      </tr>`;
+  document.getElementById(bodyId).innerHTML = rows.map(({ row, delta }) => {
+    const hotRow = cols.some(c => isHot(c, delta[c], type));
+    const cells  = cols.map(c => {
+      const hot = isHot(c, delta[c], type);
+      return `<td class="${hot ? 'hot-val' : ''}">${delta[c] || '—'}</td>`;
     }).join('');
+    return `<tr class="${hotRow ? 'hot-row' : ''}">
+      <td><span class="player-link" onclick="openProfile('${row.PlayerID}','${type}')">${row.Name || ''}</span></td>
+      <td style="font-size:.78rem;color:var(--muted)">${shortSchool(row.School)}</td>
+      <td><span class="div-badge ${row.Division || ''}">${row.Division || ''}</span></td>
+      ${cells}
+    </tr>`;
+  }).join('');
 }
 
 // ── HELPERS ────────────────────────────────────────────────────────────────────
