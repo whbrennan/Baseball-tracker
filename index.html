@@ -118,6 +118,13 @@ td:first-child,td:nth-child(2),td:nth-child(3){text-align:left;}
 .game-players{margin-top:10px;font-size:.78rem;color:var(--muted);border-top:1px solid var(--border);padding-top:8px;}
 .today-empty{text-align:center;padding:60px 20px;color:var(--muted);}
 .today-empty .empty-icon{font-size:2.5rem;margin-bottom:10px;}
+/* TODAY'S PERFORMANCES */
+#panel-performances{padding:16px;}
+.perf-section{margin-bottom:28px;background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden;}
+.perf-section-title{background:var(--green);padding:10px 16px;font-size:.8rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#fff;}
+.perf-table-wrap{overflow-x:auto;}
+.perf-table-wrap .status{padding:20px;}
+.perf-table-wrap table{min-width:500px;}
 /* DEBUG PANEL */
 #debug-panel{display:none;position:fixed;bottom:0;left:0;right:0;z-index:2000;background:#0d1117;border-top:2px solid #f87171;font-family:monospace;font-size:.75rem;max-height:220px;overflow-y:auto;}
 #debug-panel.open{display:block;}
@@ -165,18 +172,19 @@ td:first-child,td:nth-child(2),td:nth-child(3){text-align:left;}
 </header>
 
 <nav>
-  <button class="active" onclick="showPanel('batting',this)">⚾ Batting</button>
-  <button onclick="showPanel('pitching',this)">🥎 Pitching</button>
+  <button class="active" onclick="showPanel('today',this)">📅 Today</button>
+  <button onclick="showPanel('performances',this)">📊 Today's Performances</button>
+  <button onclick="showPanel('batting',this)">⚾ Batting</button>
+  <button onclick="showPanel('pitching',this)">🎯 Pitching</button>
   <button onclick="showPanel('defense',this)">🛡️ Defense</button>
   <button onclick="showPanel('leaderboard',this)">🏆 Leaderboard</button>
   <button onclick="showPanel('compare',this)">⚡ Compare</button>
   <button onclick="showPanel('scatter',this)">🔵 Scatter</button>
   <button onclick="showPanel('history',this)">📈 History</button>
-  <button onclick="showPanel('today',this)">📅 Today</button>
 </nav>
 
 <!-- BATTING -->
-<div id="panel-batting" class="panel active">
+<div id="panel-batting" class="panel">
   <div class="controls">
     <div><label>Division</label>
       <select id="bat-div" onchange="renderBatting()">
@@ -288,7 +296,7 @@ td:first-child,td:nth-child(2),td:nth-child(3){text-align:left;}
 </div>
 
 <!-- TODAY'S GAMES -->
-<div id="panel-today" class="panel">
+<div id="panel-today" class="panel active">
   <div class="today-header">
     <h2>📅 Today's Games</h2>
     <div class="today-meta">
@@ -298,6 +306,56 @@ td:first-child,td:nth-child(2),td:nth-child(3){text-align:left;}
   </div>
   <div id="today-games-container">
     <div class="status"><div class="spinner"></div><br>Loading…</div>
+  </div>
+</div>
+
+<!-- TODAY'S PERFORMANCES -->
+<div id="panel-performances" class="panel">
+  <div style="padding:16px;">
+    <div class="today-header">
+      <h2>📊 Today's Performances</h2>
+      <div class="today-meta">
+        <span id="perf-date"></span>
+        <button class="today-refresh" onclick="loadTodayPerformances()">↻ Refresh</button>
+      </div>
+    </div>
+
+    <!-- Pitching -->
+    <div class="perf-section">
+      <div class="perf-section-title">🎯 Pitching</div>
+      <div class="perf-table-wrap">
+        <div id="perf-pit-status" class="status">No data scraped today yet.</div>
+        <table id="perf-pit-table" style="display:none">
+          <thead><tr id="perf-pit-head"></tr></thead>
+          <tbody id="perf-pit-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Hitting -->
+    <div class="perf-section">
+      <div class="perf-section-title">⚾ Hitting</div>
+      <div class="perf-table-wrap">
+        <div id="perf-bat-status" class="status">No data scraped today yet.</div>
+        <table id="perf-bat-table" style="display:none">
+          <thead><tr id="perf-bat-head"></tr></thead>
+          <tbody id="perf-bat-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Fielding -->
+    <div class="perf-section">
+      <div class="perf-section-title">🛡️ Fielding</div>
+      <div class="perf-table-wrap">
+        <div id="perf-def-status" class="status">No data scraped today yet.</div>
+        <table id="perf-def-table" style="display:none">
+          <thead><tr id="perf-def-head"></tr></thead>
+          <tbody id="perf-def-body"></tbody>
+        </table>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -389,6 +447,11 @@ const CMP_COLORS = ['#f0b429','#7ec8f7','#b89af7'];
 const DIV_COLORS = { D1:'#7ec8f7', D2:'#b89af7', D3:'#7af7a0', NJCAA:'#f7c07a' };
 const BAT_THRESHOLDS = { AVG:.350, OPS:1.000, HR:5, RBI:20, SB:8, ISO:.250 };
 const PIT_THRESHOLDS = { ERA:2.00, WHIP:1.00, K_per_9:10.0, SV:3, K_BB:3.0 };
+
+// Columns shown in Today's Performances tables
+const PERF_PIT_COLS = ['IP','H','ER','BB','SO','ERA','WHIP','K_per_9'];
+const PERF_BAT_COLS = ['AB','R','H','2B','3B','HR','RBI','BB','SO','AVG','OBP','SLG','OPS'];
+const PERF_DEF_COLS = ['TC','PO','A','E','FLD%','DP'];
 
 const isHot = (col, val, type) => {
   const t = type==='batting' ? BAT_THRESHOLDS : PIT_THRESHOLDS;
@@ -494,6 +557,7 @@ async function init() {
     populateScatter(); renderScatter();
     populateHistoryControls();
     renderInactiveRoster();
+    loadTodayGames();
     dbg('✅ All render functions complete.', 'info');
   } catch(e) {
     dbg(`FATAL init error: ${e.message}`, 'error');
@@ -516,6 +580,7 @@ function showPanel(name, btn) {
   } else {
     clearInterval(todayRefreshTimer);
   }
+  if (name === 'performances') loadTodayPerformances();
 }
 
 // ── TODAY'S GAMES ──────────────────────────────────────────────────────────────
@@ -655,9 +720,83 @@ function sortTime(t) {
   return h*60+min;
 }
 
-// ── HELPERS ────────────────────────────────────────────────────────────────────
+// ── TODAY'S PERFORMANCES ───────────────────────────────────────────────────────
+async function loadTodayPerformances() {
+  document.getElementById('perf-date').textContent =
+    new Date().toLocaleDateString([], { weekday:'short', month:'short', day:'numeric' });
 
-// Returns true if the row has at least 1 game played
+  // Show spinners while loading
+  ['perf-pit','perf-bat','perf-def'].forEach(id => {
+    document.getElementById(`${id}-status`).innerHTML = '<div class="spinner"></div><br>Loading…';
+    document.getElementById(`${id}-status`).style.display = '';
+    document.getElementById(`${id}-table`).style.display = 'none';
+  });
+
+  const today = new Date().toISOString().slice(0, 10);
+  let todayBatHist = [], todayPitHist = [], todayDefHist = [];
+
+  try {
+    const [bh, ph, dh] = await Promise.all([
+      fetchSheet('Batting_History'),
+      fetchSheet('Pitching_History'),
+      fetchSheet('Defense_History'),
+    ]);
+    todayBatHist = bh.filter(r => (r.Last_Updated || '').startsWith(today));
+    todayPitHist = ph.filter(r => (r.Last_Updated || '').startsWith(today));
+    todayDefHist = dh.filter(r => (r.Last_Updated || '').startsWith(today));
+  } catch(e) {
+    dbg(`Performances load error: ${e.message}`, 'warn');
+  }
+
+  renderPerfTable(todayPitHist, PERF_PIT_COLS, 'perf-pit-head', 'perf-pit-body', 'perf-pit-status', 'perf-pit-table', 'pitching');
+  renderPerfTable(todayBatHist, PERF_BAT_COLS, 'perf-bat-head', 'perf-bat-body', 'perf-bat-status', 'perf-bat-table', 'batting');
+  renderPerfTable(todayDefHist, PERF_DEF_COLS, 'perf-def-head', 'perf-def-body', 'perf-def-status', 'perf-def-table', 'defense');
+}
+
+function renderPerfTable(rows, cols, headId, bodyId, statusId, tableId, type) {
+  const statusEl = document.getElementById(statusId);
+  const tableEl  = document.getElementById(tableId);
+
+  if (!rows.length) {
+    statusEl.innerHTML = 'No data scraped today yet.';
+    statusEl.style.display = '';
+    tableEl.style.display = 'none';
+    return;
+  }
+
+  statusEl.style.display = 'none';
+  tableEl.style.display  = '';
+
+  document.getElementById(headId).innerHTML =
+    `<th>Player</th><th>School</th><th>Div</th>` +
+    cols.map(c => `<th>${LABELS[c] || c}</th>`).join('');
+
+  // If a player was scraped multiple times today, show only their latest snapshot
+  const latestByPlayer = {};
+  rows.forEach(r => {
+    const pid = r.PlayerID;
+    if (!latestByPlayer[pid] || r.Last_Updated > latestByPlayer[pid].Last_Updated) {
+      latestByPlayer[pid] = r;
+    }
+  });
+
+  document.getElementById(bodyId).innerHTML =
+    Object.values(latestByPlayer).map(r => {
+      const hotRow = cols.some(c => isHot(c, r[c], type));
+      const cells = cols.map(c => {
+        const hot = isHot(c, r[c], type);
+        return `<td class="${hot ? 'hot-val' : ''}">${r[c] || '—'}</td>`;
+      }).join('');
+      return `<tr class="${hotRow ? 'hot-row' : ''}">
+        <td><span class="player-link" onclick="openProfile('${r.PlayerID}','${type}')">${r.Name || ''}</span></td>
+        <td style="font-size:.78rem;color:var(--muted)">${shortSchool(r.School)}</td>
+        <td><span class="div-badge ${r.Division || ''}">${r.Division || ''}</span></td>
+        ${cells}
+      </tr>`;
+    }).join('');
+}
+
+// ── HELPERS ────────────────────────────────────────────────────────────────────
 const hasGames = r => {
   const g = parseFloat(r.G);
   return !isNaN(g) && g > 0;
@@ -673,13 +812,10 @@ function filterRows(data, divId, searchId) {
   );
 }
 
-// Defense shares the same G-filter via filterRows
 function filterDefenseRows(divId, searchId) {
   const div = document.getElementById(divId).value;
   const q   = document.getElementById(searchId).value.toLowerCase();
-  // Filter out players with no meaningful defensive stats
   const hasDefStats = r => DEF_COLS.some(c => parseFloat(r[c]) > 0);
-  // Also apply G filter if the defense sheet has a G column
   const defHasG = defData.length > 0 && defData[0].G !== undefined;
   return defData.filter(r =>
     hasDefStats(r) && (!defHasG || hasGames(r)) &&
