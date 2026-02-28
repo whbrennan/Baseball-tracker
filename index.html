@@ -589,7 +589,7 @@ async function loadTodayGames(manual = false) {
     document.getElementById('today-games-container').innerHTML =
       '<div class="status"><div class="spinner"></div><br>Refreshing…</div>';
   }
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
   try {
     const [games, espnScores] = await Promise.all([
       fetchTodaySchedule(todayStr),
