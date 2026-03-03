@@ -731,7 +731,7 @@ async function loadTodayPerformances() {
     document.getElementById(`${id}-table`).style.display = 'none';
   });
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
   let todayBatHist = [], todayPitHist = [], todayDefHist = [];
   let bh = [], ph = [], dh = [];
 
@@ -780,7 +780,7 @@ function renderPerfTable(todayRows, allHistory, cols, headId, bodyId, statusId, 
     return;
   }
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 
   // For each player, get their latest row from today and their last row before today
   const latestToday = {};
