@@ -150,5 +150,21 @@
   "espn_team_id": "",
   "players": ["Shane Howie", "Brett Triplett"],
   "notes": "No year in URL — may need updating each season"
+  },
+    {
+    "school": "Radford",
+    "division": "D1",
+    "schedule_url": "https://radfordathletics.com/sports/baseball/schedule/2026",
+    "espn_team_id": "2448",
+    "players": ["Luke Sullivan"],
+    "notes": ""
+  },
+  {
+    "school": "Harding",
+    "division": "D2",
+    "schedule_url": "https://hardingsports.com/sports/baseball/schedule/2026",
+    "espn_team_id": "",
+    "players": ["Maddox Webb"],
+    "notes": ""
   }
 ]
