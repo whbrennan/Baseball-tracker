@@ -56,16 +56,16 @@ DEFENSE_COLS  = ["TC","PO","A","E","FLD%","DP","SBA","CSB","PB","CI"]
 
 # ── THRESHOLD ALERTS ──────────────────────────────────────────────────────────
 BATTING_THRESHOLDS = {
-    "HR" : ("≥", 1),
-    "RBI": ("≥", 3),
-    "AVG": ("≥", 0.400),
-    "OPS": ("≥", 1.000),
+    "HR" : (">=", 1),
+    "RBI": (">=", 3),
+    "AVG": (">=", 0.400),
+    "OPS": (">=", 1.000),
 }
 
 PITCHING_THRESHOLDS = {
-    "SO" : ("≥", 10),
-    "ERA": ("≤", 1.00),
-    "IP" : ("≥", 7.0),
+    "SO" : (">=", 10),
+    "ERA": ("<=", 1.00),
+    "IP" : (">=", 7.0),
 }
 
 # ── NOTIFICATIONS ─────────────────────────────────────────────────────────────
@@ -87,18 +87,18 @@ def push(title, message, priority=0):
             timeout=10,
         )
     except Exception as e:
-        print(f"    ⚠ Pushover error: {e}")
+        print(f"    Warning: Pushover error: {e}")
 
 
 def _threshold_triggered(new_val, old_val, op, cutoff):
     """Return True if new_val newly crosses cutoff (old_val did not)."""
     try:
-        nv = float(new_val) if new_val not in ("", "—", None) else None
-        ov = float(old_val) if old_val not in ("", "—", None) else None
+        nv = float(new_val) if new_val not in ("", "-", None) else None
+        ov = float(old_val) if old_val not in ("", "-", None) else None
         if nv is None:
             return False
-        meets_now    = (nv >= cutoff) if op == "≥" else (nv <= cutoff)
-        met_before   = ((ov >= cutoff) if op == "≥" else (ov <= cutoff)) if ov is not None else False
+        meets_now  = (nv >= cutoff) if op == ">=" else (nv <= cutoff)
+        met_before = ((ov >= cutoff) if op == ">=" else (ov <= cutoff)) if ov is not None else False
         return meets_now and not met_before
     except (ValueError, TypeError):
         return False
@@ -114,9 +114,9 @@ def check_thresholds(player, new_stats, old_row, stat_type):
         old_val = old_row.get(stat, "")
         if _threshold_triggered(new_val, old_val, op, cutoff):
             push(
-                f"🚨 {player['Name']} — {stat} alert",
+                f"ALERT: {player['Name']} -- {stat} alert",
                 f"{player['School']} ({player['Division']})\n"
-                f"{stat}: {new_val} (was {old_val or '—'})",
+                f"{stat}: {new_val} (was {old_val or '--'})",
                 priority=0,
             )
 
@@ -143,8 +143,8 @@ def split_combined(value, sep="-"):
 
 
 def align_headers(hdrs, cells):
-    if "Player" in hdrs and len(hdrs) == len(cells) + 1:
-        hdrs = [h for h in hdrs if h != "Player"]
+    if "PLAYER" in hdrs and len(hdrs) == len(cells) + 1:
+        hdrs = [h for h in hdrs if h != "PLAYER"]
     return hdrs
 
 
@@ -169,7 +169,7 @@ def map_row(raw, col_map):
         if ip > 0:
             out["K_per_9"]  = f"{so  / ip * 9:.2f}"
             out["BB_per_9"] = f"{bb  / ip * 9:.2f}"
-            out["K_BB"]     = f"{so  / bb:.2f}" if bb > 0 else "—"
+            out["K_BB"]     = f"{so  / bb:.2f}" if bb > 0 else "--"
             xfip = ((13 * ip / 9) + (3 * (bb + hbp)) - (2 * so)) / ip + 3.10
             out["xFIP"]     = f"{xfip:.2f}"
             bf = ip * 3 + h_p + bb + hbp
@@ -227,7 +227,7 @@ def zero_stats(col_map):
 
 def is_zero_row(mapped, cols):
     """Return True if every tracked stat is zero or empty."""
-    return all(not mapped.get(c) or str(mapped.get(c)) in ("0", "", "—") for c in cols)
+    return all(not mapped.get(c) or str(mapped.get(c)) in ("0", "", "--") for c in cols)
 
 # ── SCRAPING ──────────────────────────────────────────────────────────────────
 def find_table(page, stat_type):
@@ -235,38 +235,55 @@ def find_table(page, stat_type):
         rows = table.query_selector_all("tr")
         if len(rows) < 2:
             continue
-        hdrs = [c.inner_text().strip() for c in rows[0].query_selector_all("th, td")]
-        if stat_type == "batting"  and "AVG"  in hdrs and "AB"  in hdrs: return table, hdrs
-        if stat_type == "pitching" and "ERA"  in hdrs and "IP"  in hdrs: return table, hdrs
-        if stat_type == "defense"  and "FLD%" in hdrs and "PO"  in hdrs: return table, hdrs
+        hdrs = [c.inner_text().strip().upper() for c in rows[0].query_selector_all("th, td")]
+        if stat_type == "batting"  and "AVG" in hdrs and "AB"  in hdrs: return table, hdrs
+        if stat_type == "pitching" and "ERA" in hdrs and "IP"  in hdrs: return table, hdrs
+        if stat_type == "defense"  and "FLD%" in hdrs and "PO" in hdrs: return table, hdrs
     return None, []
 
 
 def scrape(page, player, stat_type):
     jersey = str(player.get("Jersey", "")).strip()
     if not jersey:
-        print(f"    ⚠ No jersey number — writing zeros")
+        print(f"    Warning: No jersey number -- writing zeros")
         return zero_stats({"batting": BATTING_MAP, "pitching": PITCHING_MAP, "defense": DEFENSE_MAP}[stat_type])
 
     page.goto(player["Stats_URL"], wait_until="domcontentloaded", timeout=60000)
     time.sleep(5)
 
+    # ── Tab navigation for SIDEARM sites ─────────────────────────────────────
+    if stat_type == "pitching":
+        if stat_type == "pitching":
+            if "gwsports.com" in player["Stats_URL"]:  # ← add this line
+                try:
+                    trigger = page.locator("button.s-select-box", has_text="Batting").first
+                    trigger.click(timeout=5000)
+                    time.sleep(1)
+                    pitch_option = page.locator("li.s-select__option-item", has_text="Pitching").first
+                    pitch_option.click(timeout=5000)
+                    time.sleep(3)
+                except Exception as e:
+                    print(f"    Warning: Pitching tab click failed: {e}")
+
     if stat_type == "defense":
-        try:
-            trigger = page.locator("button.s-select-box", has_text="Batting").first
-            trigger.click(timeout=5000)
-            time.sleep(1)
-            fielding = page.locator("li.s-select__option-item", has_text="Fielding").first
-            fielding.click(timeout=5000)
-            time.sleep(2)
-        except Exception:
-            pass  # If dropdown not found, fall through to standard table detection
+        if "gwsports.com" in player["Stats_URL"] or "ecupirates.com" in player["Stats_URL"]:
+            try:
+                trigger = page.locator("button.s-select-box", has_text="Batting").first
+                trigger.click(timeout=5000)
+                time.sleep(1)
+                fielding = page.locator("li.s-select__option-item", has_text="Fielding").first
+                fielding.click(timeout=5000)
+                time.sleep(2)
+            except Exception:
+                pass
 
     col_map = {"batting": BATTING_MAP, "pitching": PITCHING_MAP, "defense": DEFENSE_MAP}[stat_type]
     table, hdrs = find_table(page, stat_type)
     if not table:
-        print(f"    ⚠ No {stat_type} table found — writing zeros")
+        print(f"    Warning: No {stat_type} table found -- writing zeros")
         return zero_stats(col_map)
+
+    hdrs = [h.upper() for h in hdrs]
 
     for row in table.query_selector_all("tr")[1:]:
         cells = [c.inner_text().strip() for c in row.query_selector_all("td")]
@@ -277,7 +294,7 @@ def scrape(page, player, stat_type):
             raw = {aligned[i]: cells[i] for i in range(min(len(aligned), len(cells)))}
             return map_row(raw, col_map)
 
-    print(f"    ⚠ Jersey #{jersey} not found — writing zeros")
+    print(f"    Warning: Jersey #{jersey} not found -- writing zeros")
     return zero_stats(col_map)
 
 # ── SHEET WRITING ─────────────────────────────────────────────────────────────
@@ -292,10 +309,10 @@ def write_stats(sheet, tab, player, mapped, target_cols):
     for i, r in enumerate(existing):
         if r.get("PlayerID") == pid:
             ws.update(values=[row], range_name=f"A{i+2}")
-            print(f"    ✓ {tab} updated")
+            print(f"    OK: {tab} updated")
             return r
     ws.append_row(row)
-    print(f"    ✓ {tab} added")
+    print(f"    OK: {tab} added")
     return None
 
 
@@ -305,7 +322,7 @@ def write_history(sheet, tab, player, mapped, target_cols):
     row = [now, player["PlayerID"], player["Name"], player["School"], player["Division"]]
     row += [str(mapped.get(col, "")) for col in target_cols]
     ws.append_row(row)
-    print(f"    ✓ {tab} snapshot saved")
+    print(f"    OK: {tab} snapshot saved")
 
 
 def log(sheet, player, status, notes=""):
@@ -335,7 +352,7 @@ def main(test_player_id=None):
         page = context.new_page()
 
         for player in players:
-            print(f"→ {player['Name']} ({player['School']}) Jersey #{player.get('Jersey','')}")
+            print(f"-> {player['Name']} ({player['School']}) Jersey #{player.get('Jersey','')}")
             try:
                 if player["Type"] == "Hitter":
                     for st, tab, hist, cols in [
@@ -348,9 +365,9 @@ def main(test_player_id=None):
                         if st == "batting":
                             if (old_row is None or is_zero_row(old_row, BATTING_COLS)) and not is_zero_row(s, BATTING_COLS):
                                 push(
-                                    f"⚾ {player['Name']} has arrived!",
+                                    f"Player {player['Name']} has arrived!",
                                     f"{player['School']} ({player['Division']})\n"
-                                    f"AVG: {s.get('AVG','—')}  OPS: {s.get('OPS','—')}  H: {s.get('H','—')}",
+                                    f"AVG: {s.get('AVG','--')}  OPS: {s.get('OPS','--')}  H: {s.get('H','--')}",
                                     priority=1,
                                 )
                             check_thresholds(player, s, old_row, "batting")
@@ -360,20 +377,20 @@ def main(test_player_id=None):
                     write_history(sheet, "Pitching_History", player, s, PITCHING_COLS)
                     if (old_row is None or is_zero_row(old_row, PITCHING_COLS)) and not is_zero_row(s, PITCHING_COLS):
                         push(
-                            f"🥎 {player['Name']} has arrived!",
+                            f"Pitcher {player['Name']} has arrived!",
                             f"{player['School']} ({player['Division']})\n"
-                            f"ERA: {s.get('ERA','—')}  IP: {s.get('IP','—')}  K: {s.get('SO','—')}",
+                            f"ERA: {s.get('ERA','--')}  IP: {s.get('IP','--')}  K: {s.get('SO','--')}",
                             priority=1,
                         )
                     check_thresholds(player, s, old_row, "pitching")
                 log(sheet, player, "SUCCESS")
             except Exception as e:
-                print(f"    ✗ ERROR: {e}")
+                print(f"    ERROR: {e}")
                 log(sheet, player, "ERROR", str(e))
 
         browser.close()
-    print("\n✓ Done! Check your Google Sheet.")
+    print("\nDone! Check your Google Sheet.")
 
 
 if __name__ == "__main__":
-    main()
+    main() #To test single player add test_player_id="PLAYERID" argument, otherwise it will run for all players in the sheet.
