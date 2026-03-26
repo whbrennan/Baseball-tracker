@@ -778,11 +778,31 @@ function formatStatDisplay(value, col, type) {
   return value;
 }
 
-function getDelta(todayRow, prevRow, cols) {
+function parsePitchingIpToOuts(value) {
+  const text = String(value ?? '').trim();
+  if (!text || text === '—' || text === '--') return 0;
+  const [wholePart, fracPart = '0'] = text.split('.');
+  const innings = parseInt(wholePart, 10);
+  const outs = parseInt(fracPart.charAt(0) || '0', 10);
+  if (Number.isNaN(innings) || Number.isNaN(outs)) return 0;
+  return innings * 3 + Math.min(outs, 2);
+}
+
+function formatOutsAsPitchingIp(outs) {
+  if (!Number.isFinite(outs) || outs <= 0) return '—';
+  const wholeInnings = Math.floor(outs / 3);
+  const remainingOuts = outs % 3;
+  return `${wholeInnings}.${remainingOuts}`;
+}
+
+function getDelta(todayRow, prevRow, cols, type) {
   const delta = { ...todayRow };
   cols.forEach(c => {
     if (RATE_STATS.has(c)) {
       delta[c] = todayRow[c]; // show current rate, not a difference
+    } else if (type === 'pitching' && c === 'IP') {
+      const diffOuts = parsePitchingIpToOuts(todayRow[c]) - parsePitchingIpToOuts(prevRow?.[c]);
+      delta[c] = diffOuts > 0 ? formatOutsAsPitchingIp(diffOuts) : '—';
     } else {
       const diff = (parseFloat(todayRow[c]) || 0) - (parseFloat(prevRow?.[c]) || 0);
       delta[c] = diff > 0 ? String(diff) : '—';
@@ -816,7 +836,7 @@ function renderPerfTable(todayRows, allHistory, cols, headId, bodyId, statusId, 
     const prevRow = allHistory
       .filter(h => h.PlayerID === r.PlayerID && getPerformanceDate(h, latestCompletedGameDates) !== perfDate)
       .sort((a, b) => getSortTimestamp(b).localeCompare(getSortTimestamp(a)))[0] || null;
-    return { row: r, delta: getDelta(r, prevRow, cols), perfDate };
+    return { row: r, delta: getDelta(r, prevRow, cols, type), perfDate };
   }).filter(({ delta }) =>
     // Only show players who have at least one counting stat change today
     cols.some(c => !RATE_STATS.has(c) && delta[c] && delta[c] !== '—')
