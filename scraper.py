@@ -246,6 +246,7 @@ def current_timestamps():
 
 BASE_FIELDS = ["Last_Updated", "PlayerID", "Name", "School", "Division"]
 HISTORY_PREFIX_FIELDS = ["Last_Updated", "Scraped_At_UTC", "Business_Date_ET", "PlayerID", "Name", "School", "Division"]
+KNOWN_DIVISIONS = {"D1", "D2", "D3", "NJCAA"}
 
 HEADER_ALIASES = {
     "lastupdated": "Last_Updated",
@@ -276,6 +277,10 @@ def canonicalize_header(header):
     return HEADER_ALIASES.get(normalized, text)
 
 
+def normalize_school_name(value):
+    return " ".join(str(value or "").split()).strip().lower()
+
+
 def get_headers(ws):
     return [h.strip() for h in ws.row_values(1)]
 
@@ -304,7 +309,13 @@ def build_row(headers, payload, target_cols, history=False):
 
 def looks_like_player_id(value):
     text = str(value or "").strip()
-    return bool(text) and " " not in text and ":" not in text and text.count("-") <= 1
+    return (
+        bool(text)
+        and " " not in text
+        and ":" not in text
+        and text.count("-") <= 1
+        and any(ch.isdigit() for ch in text)
+    )
 
 
 def looks_like_datetime(value):
@@ -390,7 +401,39 @@ def history_row_missing_metadata(row_map):
     )
 
 
-def repair_history_table(sheet, tab, target_cols):
+def history_row_missing_player_fields(row_map):
+    if not row_map:
+        return False
+    return (
+        looks_like_datetime(row_map.get("Scraped_At_UTC", ""))
+        and looks_like_date(row_map.get("Business_Date_ET", ""))
+        and not looks_like_player_id(row_map.get("PlayerID", ""))
+        and str(row_map.get("Name", "")).strip() in KNOWN_DIVISIONS
+    )
+
+
+def build_player_lookup(players, stat_type):
+    lookup = {}
+    for player in players:
+        player_type = str(player.get("Type", "")).strip()
+        matches_type = (
+            (stat_type == "pitching" and player_type == "Pitcher")
+            or (stat_type in ("batting", "defense") and player_type == "Hitter")
+        )
+        if not matches_type:
+            continue
+        key = (
+            normalize_school_name(player.get("School", "")),
+            str(player.get("Division", "")).strip(),
+        )
+        if key in lookup:
+            lookup[key] = None
+        else:
+            lookup[key] = player
+    return lookup
+
+
+def repair_history_table(sheet, tab, target_cols, players):
     ws = sheet.worksheet(tab)
     headers = get_headers(ws)
     effective_headers = get_effective_headers(headers, target_cols, history=True)
@@ -398,14 +441,22 @@ def repair_history_table(sheet, tab, target_cols):
     print(f"    {tab} mapped headers: {effective_headers}")
     legacy_headers = BASE_FIELDS + target_cols
     all_values = ws.get_all_values()
+    all_records = ws.get_all_records()
+    stat_type = "pitching" if tab == "Pitching_History" else "defense" if tab == "Defense_History" else "batting"
+    player_lookup = build_player_lookup(players, stat_type)
     repairs = []
 
-    for row_index, raw_row in enumerate(all_values[1:], start=2):
+    for offset, raw_row in enumerate(all_values[1:]):
+        row_index = offset + 2
         padded_row = raw_row + [""] * max(0, len(effective_headers) - len(raw_row))
         row_map = {effective_headers[i]: padded_row[i] for i in range(len(effective_headers))}
+        record_map = {}
+        if offset < len(all_records):
+            record_map = {canonicalize_header(k): v for k, v in all_records[offset].items()}
         needs_shift_repair = history_row_needs_repair(row_map)
-        needs_metadata_repair = history_row_missing_metadata(row_map)
-        if not needs_shift_repair and not needs_metadata_repair:
+        needs_metadata_repair = history_row_missing_metadata(record_map)
+        needs_player_field_repair = history_row_missing_player_fields(record_map)
+        if not needs_shift_repair and not needs_metadata_repair and not needs_player_field_repair:
             continue
 
         if needs_shift_repair:
@@ -414,8 +465,28 @@ def repair_history_table(sheet, tab, target_cols):
                 legacy_headers[i]: legacy_values[i] if i < len(legacy_values) else ""
                 for i in range(len(legacy_headers))
             }
+        elif needs_player_field_repair:
+            lookup_key = (
+                normalize_school_name(record_map.get("PlayerID", "")),
+                str(record_map.get("Name", "")).strip(),
+            )
+            player = player_lookup.get(lookup_key)
+            if not player:
+                continue
+            source_map = {
+                "Last_Updated": record_map.get("Last_Updated", ""),
+                "Scraped_At_UTC": record_map.get("Scraped_At_UTC", ""),
+                "Business_Date_ET": record_map.get("Business_Date_ET", ""),
+            }
+            source_map["PlayerID"] = player.get("PlayerID", "")
+            source_map["Name"] = player.get("Name", "")
+            source_map["School"] = raw_row[3] if len(raw_row) > 3 else player.get("School", "")
+            source_map["Division"] = raw_row[4] if len(raw_row) > 4 else player.get("Division", "")
+            stat_values = raw_row[5:]
+            for index, col in enumerate(target_cols):
+                source_map[col] = stat_values[index] if index < len(stat_values) else ""
         else:
-            source_map = row_map
+            source_map = record_map
 
         repaired_payload = {
             "Last_Updated": source_map.get("Last_Updated", ""),
@@ -571,10 +642,10 @@ def log(sheet, player, status, notes=""):
 def main(test_player_id=None):
     print("Connecting to Google Sheets...")
     sheet   = connect()
-    repair_history_table(sheet, "Batting_History", BATTING_COLS)
-    repair_history_table(sheet, "Pitching_History", PITCHING_COLS)
-    repair_history_table(sheet, "Defense_History", DEFENSE_COLS)
     players = get_players(sheet)
+    repair_history_table(sheet, "Batting_History", BATTING_COLS, players)
+    repair_history_table(sheet, "Pitching_History", PITCHING_COLS, players)
+    repair_history_table(sheet, "Defense_History", DEFENSE_COLS, players)
     if test_player_id:
         players = [p for p in players if p["PlayerID"] == test_player_id]
         if not players:
