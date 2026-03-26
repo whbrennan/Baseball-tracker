@@ -741,9 +741,9 @@ async function loadTodayPerformances() {
       fetchSheet('Pitching_History'),
       fetchSheet('Defense_History'),
     ]);
-    todayBatHist = bh.filter(r => (r.Last_Updated || '').startsWith(today));
-    todayPitHist = ph.filter(r => (r.Last_Updated || '').startsWith(today));
-    todayDefHist = dh.filter(r => (r.Last_Updated || '').startsWith(today));
+    todayBatHist = bh.filter(r => getBusinessDate(r) === today);
+    todayPitHist = ph.filter(r => getBusinessDate(r) === today);
+    todayDefHist = dh.filter(r => getBusinessDate(r) === today);
   } catch(e) {
     dbg(`Performances load error: ${e.message}`, 'warn');
   }
@@ -785,14 +785,14 @@ function renderPerfTable(todayRows, allHistory, cols, headId, bodyId, statusId, 
   // For each player, get their latest row from today and their last row before today
   const latestToday = {};
   todayRows.forEach(r => {
-    if (!latestToday[r.PlayerID] || r.Last_Updated > latestToday[r.PlayerID].Last_Updated)
+    if (!latestToday[r.PlayerID] || getSortTimestamp(r) > getSortTimestamp(latestToday[r.PlayerID]))
       latestToday[r.PlayerID] = r;
   });
 
   const rows = Object.values(latestToday).map(r => {
     const prevRow = allHistory
-      .filter(h => h.PlayerID === r.PlayerID && !(h.Last_Updated || '').startsWith(today))
-      .sort((a, b) => b.Last_Updated.localeCompare(a.Last_Updated))[0] || null;
+      .filter(h => h.PlayerID === r.PlayerID && getBusinessDate(h) !== today)
+      .sort((a, b) => getSortTimestamp(b).localeCompare(getSortTimestamp(a)))[0] || null;
     return { row: r, delta: getDelta(r, prevRow, cols) };
   }).filter(({ delta }) =>
     // Only show players who have at least one counting stat change today
@@ -834,6 +834,10 @@ const hasGames = r => {
   return !isNaN(g) && g > 0;
 };
 
+const getBusinessDate = r => r.Business_Date_ET || (r.Last_Updated || '').split(' ')[0] || '';
+const getSortTimestamp = r => r.Scraped_At_UTC || r.Last_Updated || '';
+const getDisplayDateLabel = r => getBusinessDate(r);
+
 function filterRows(data, divId, searchId) {
   const div = document.getElementById(divId).value;
   const q   = document.getElementById(searchId).value.toLowerCase();
@@ -863,14 +867,14 @@ function setSort(state, col) {
   state.col===col ? state.dir*=-1 : (state.col=col, state.dir=LOWER_IS_BETTER.has(col)?1:-1);
 }
 function getPrev(history, pid) {
-  const rows = history.filter(r=>r.PlayerID===pid).sort((a,b)=>b.Last_Updated.localeCompare(a.Last_Updated));
+  const rows = history.filter(r=>r.PlayerID===pid).sort((a,b)=>getSortTimestamp(b).localeCompare(getSortTimestamp(a)));
   return rows.length>=2 ? rows[1] : null;
 }
 function trendArrow() { return ''; }
 function getStreak(history, pid, type) {
   const stat = type==='batting'?'OPS':'ERA';
   const rows = history.filter(r=>r.PlayerID===pid&&parseFloat(r[stat])>0)
-    .sort((a,b)=>a.Last_Updated.localeCompare(b.Last_Updated));
+    .sort((a,b)=>getSortTimestamp(a).localeCompare(getSortTimestamp(b)));
   if (rows.length<3) return 0;
   let streak=0;
   for (let i=rows.length-1;i>0;i--) {
@@ -1036,7 +1040,7 @@ function renderCompare() {
   pids.forEach(pv=>{
     const [pid,type]=pv.split('|');
     const hist=type==='batting'?batHistory:pitHistory;
-    hist.filter(r=>r.PlayerID===pid).forEach(r=>allDates.add(r.Last_Updated.split(' ')[0]));
+    hist.filter(r=>r.PlayerID===pid).forEach(r=>allDates.add(getDisplayDateLabel(r)));
   });
   const dates=[...allDates].sort();
   if(dates.length<2){chartBox.style.display='none';empty.style.display='';return;}
@@ -1044,9 +1048,9 @@ function renderCompare() {
   const datasets=pids.map((pv,i)=>{
     const [pid,type]=pv.split('|');
     const hist=type==='batting'?batHistory:pitHistory;
-    const rows=hist.filter(r=>r.PlayerID===pid).sort((a,b)=>a.Last_Updated.localeCompare(b.Last_Updated));
+    const rows=hist.filter(r=>r.PlayerID===pid).sort((a,b)=>getSortTimestamp(a).localeCompare(getSortTimestamp(b)));
     const name=(rows[0]?.Name)||pid,dateMap={};
-    rows.forEach(r=>{dateMap[r.Last_Updated.split(' ')[0]]=parseFloat(r[stat])||null;});
+    rows.forEach(r=>{dateMap[getDisplayDateLabel(r)]=parseFloat(r[stat])||null;});
     return{label:name,spanGaps:true,tension:0.3,pointRadius:4,
       borderColor:CMP_COLORS[i],backgroundColor:CMP_COLORS[i]+'33',
       data:dates.map(d=>dateMap[d]??null)};
@@ -1115,12 +1119,12 @@ function renderHistory() {
   const history=type==='batting'?batHistory:pitHistory;
   const empty=document.getElementById('history-empty'),chartBox=document.querySelector('#panel-history .chart-box');
   const rows=history.filter(r=>r.PlayerID===pid&&r[stat]!==''&&r[stat]!=='0')
-    .sort((a,b)=>a.Last_Updated.localeCompare(b.Last_Updated));
+    .sort((a,b)=>getSortTimestamp(a).localeCompare(getSortTimestamp(b)));
   if(rows.length<2){chartBox.style.display='none';empty.style.display='';return;}
   chartBox.style.display='';empty.style.display='none';
   if(histChart)histChart.destroy();
   histChart=new Chart(document.getElementById('hist-chart'),{type:'line',
-    data:{labels:rows.map(r=>r.Last_Updated.split(' ')[0]),datasets:[{
+    data:{labels:rows.map(r=>getDisplayDateLabel(r)),datasets:[{
       label:`${rows[0].Name} — ${LABELS[stat]||stat}`,
       data:rows.map(r=>parseFloat(r[stat])||0),
       borderColor:'#1a7a3c',backgroundColor:'rgba(26,122,60,0.15)',
@@ -1168,7 +1172,7 @@ function openProfile(pid, type) {
   const defaultStat=type==='batting'?'AVG':'ERA';
   const hasHistory=history.filter(r=>r.PlayerID===pid&&parseFloat(r[cols[0]])>0).length>=2;
   const histRows=history.filter(r=>r.PlayerID===pid&&r[defaultStat]!==''&&r[defaultStat]!=='0')
-    .sort((a,b)=>a.Last_Updated.localeCompare(b.Last_Updated));
+    .sort((a,b)=>getSortTimestamp(a).localeCompare(getSortTimestamp(b)));
   document.getElementById('modal-body').innerHTML=`
     <div class="modal-section-title">Season Stats</div>
     <div class="stat-grid">${statCells}</div>
@@ -1192,7 +1196,7 @@ function openProfile(pid, type) {
         plugins:{legend:{labels:{color:'#e8edf2',font:{size:11}}}}}});
     if(hasHistory){
       modalChart=new Chart(document.getElementById('modal-chart'),{type:'line',
-        data:{labels:histRows.map(r=>r.Last_Updated.split(' ')[0]),datasets:[{
+        data:{labels:histRows.map(r=>getDisplayDateLabel(r)),datasets:[{
           label:`${LABELS[defaultStat]||defaultStat}`,data:histRows.map(r=>parseFloat(r[defaultStat])||0),
           borderColor:'#1a7a3c',backgroundColor:'rgba(26,122,60,0.15)',
           pointBackgroundColor:'#f0b429',pointRadius:4,tension:0.3,fill:true}]},

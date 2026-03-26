@@ -6,12 +6,16 @@ import gspread
 from google.oauth2.service_account import Credentials
 from playwright.sync_api import sync_playwright
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 SPREADSHEET_ID    = os.environ.get("SPREADSHEET_ID")
 GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDENTIALS")
 PUSHOVER_USER     = os.environ.get("PUSHOVER_USER_KEY")
 PUSHOVER_TOKEN    = os.environ.get("PUSHOVER_API_TOKEN")
+
+UTC = ZoneInfo("UTC")
+EASTERN = ZoneInfo("America/New_York")
 
 BATTING_MAP = {
     "GP-GS"  : ("G", "GS"),
@@ -229,6 +233,37 @@ def is_zero_row(mapped, cols):
     """Return True if every tracked stat is zero or empty."""
     return all(not mapped.get(c) or str(mapped.get(c)) in ("0", "", "--") for c in cols)
 
+
+def current_timestamps():
+    now_utc = datetime.now(UTC)
+    now_et = now_utc.astimezone(EASTERN)
+    return {
+        "last_updated_et": now_et.strftime("%Y-%m-%d %H:%M"),
+        "scraped_at_utc": now_utc.strftime("%Y-%m-%d %H:%M"),
+        "business_date_et": now_et.strftime("%Y-%m-%d"),
+    }
+
+
+def stats_changed(previous_row, mapped, target_cols):
+    """Return True when any tracked stat differs from the previous row."""
+    if previous_row is None:
+        return True
+    def normalize(value):
+        text = str(value if value is not None else "").strip()
+        if text in ("", "--"):
+            return text
+        try:
+            num = float(text)
+            if num.is_integer():
+                return str(int(num))
+            return f"{num:.6f}".rstrip("0").rstrip(".")
+        except (ValueError, TypeError):
+            return text
+    for col in target_cols:
+        if normalize(previous_row.get(col, "")) != normalize(mapped.get(col, "")):
+            return True
+    return False
+
 # ── SCRAPING ──────────────────────────────────────────────────────────────────
 def find_table(page, stat_type):
     for table in page.query_selector_all("table"):
@@ -302,8 +337,8 @@ def write_stats(sheet, tab, player, mapped, target_cols):
     """Update current stats row. Returns previous row for comparison."""
     ws  = sheet.worksheet(tab)
     pid = player["PlayerID"]
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    row = [now, pid, player["Name"], player["School"], player["Division"]]
+    ts = current_timestamps()
+    row = [ts["last_updated_et"], pid, player["Name"], player["School"], player["Division"]]
     row += [str(mapped.get(col, "")) for col in target_cols]
     existing = ws.get_all_records()
     for i, r in enumerate(existing):
@@ -316,18 +351,31 @@ def write_stats(sheet, tab, player, mapped, target_cols):
     return None
 
 
-def write_history(sheet, tab, player, mapped, target_cols):
+def write_history(sheet, tab, player, mapped, target_cols, previous_row=None):
     ws  = sheet.worksheet(tab)
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    row = [now, player["PlayerID"], player["Name"], player["School"], player["Division"]]
+    if not stats_changed(previous_row, mapped, target_cols):
+        print(f"    OK: {tab} unchanged -- snapshot skipped")
+        return False
+    ts = current_timestamps()
+    row = [
+        ts["last_updated_et"],
+        ts["scraped_at_utc"],
+        ts["business_date_et"],
+        player["PlayerID"],
+        player["Name"],
+        player["School"],
+        player["Division"],
+    ]
     row += [str(mapped.get(col, "")) for col in target_cols]
     ws.append_row(row)
     print(f"    OK: {tab} snapshot saved")
+    return True
 
 
 def log(sheet, player, status, notes=""):
+    ts = current_timestamps()
     sheet.worksheet("Scrape_Log").append_row([
-        datetime.now().strftime("%Y-%m-%d %H:%M"),
+        ts["last_updated_et"],
         player["PlayerID"], player["Name"], player["School"], status, notes,
     ])
 
@@ -361,7 +409,7 @@ def main(test_player_id=None):
                     ]:
                         s       = scrape(page, player, st)
                         old_row = write_stats(sheet, tab, player, s, cols)
-                        write_history(sheet, hist, player, s, cols)
+                        write_history(sheet, hist, player, s, cols, old_row)
                         if st == "batting":
                             if (old_row is None or is_zero_row(old_row, BATTING_COLS)) and not is_zero_row(s, BATTING_COLS):
                                 push(
@@ -374,7 +422,7 @@ def main(test_player_id=None):
                 else:
                     s       = scrape(page, player, "pitching")
                     old_row = write_stats(sheet, "Pitching", player, s, PITCHING_COLS)
-                    write_history(sheet, "Pitching_History", player, s, PITCHING_COLS)
+                    write_history(sheet, "Pitching_History", player, s, PITCHING_COLS, old_row)
                     if (old_row is None or is_zero_row(old_row, PITCHING_COLS)) and not is_zero_row(s, PITCHING_COLS):
                         push(
                             f"Pitcher {player['Name']} has arrived!",
@@ -393,4 +441,7 @@ def main(test_player_id=None):
 
 
 if __name__ == "__main__":
-    main() #To test single player add test_player_id="PLAYERID" argument, otherwise it will run for all players in the sheet.
+    test_player_id = os.environ.get("TEST_PLAYER_ID")
+    if not test_player_id and len(os.sys.argv) > 1:
+        test_player_id = os.sys.argv[1]
+    main(test_player_id=test_player_id)
