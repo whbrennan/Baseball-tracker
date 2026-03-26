@@ -376,6 +376,20 @@ def history_row_needs_repair(row_map):
     )
 
 
+def history_row_missing_metadata(row_map):
+    if not row_map:
+        return False
+    last_updated = row_map.get("Last_Updated", "")
+    player_id = row_map.get("PlayerID", "")
+    scraped_at = row_map.get("Scraped_At_UTC", "")
+    business_date = row_map.get("Business_Date_ET", "")
+    return (
+        looks_like_datetime(last_updated)
+        and looks_like_player_id(player_id)
+        and (not looks_like_datetime(scraped_at) or not looks_like_date(business_date))
+    )
+
+
 def repair_history_table(sheet, tab, target_cols):
     ws = sheet.worksheet(tab)
     headers = get_headers(ws)
@@ -389,25 +403,31 @@ def repair_history_table(sheet, tab, target_cols):
     for row_index, raw_row in enumerate(all_values[1:], start=2):
         padded_row = raw_row + [""] * max(0, len(effective_headers) - len(raw_row))
         row_map = {effective_headers[i]: padded_row[i] for i in range(len(effective_headers))}
-        if not history_row_needs_repair(row_map):
+        needs_shift_repair = history_row_needs_repair(row_map)
+        needs_metadata_repair = history_row_missing_metadata(row_map)
+        if not needs_shift_repair and not needs_metadata_repair:
             continue
 
-        legacy_values = padded_row[:len(legacy_headers)]
-        legacy_map = {
-            legacy_headers[i]: legacy_values[i] if i < len(legacy_values) else ""
-            for i in range(len(legacy_headers))
-        }
+        if needs_shift_repair:
+            legacy_values = padded_row[:len(legacy_headers)]
+            source_map = {
+                legacy_headers[i]: legacy_values[i] if i < len(legacy_values) else ""
+                for i in range(len(legacy_headers))
+            }
+        else:
+            source_map = row_map
+
         repaired_payload = {
-            "Last_Updated": legacy_map.get("Last_Updated", ""),
-            "Scraped_At_UTC": to_scraped_at_utc(legacy_map.get("Last_Updated", "")),
-            "Business_Date_ET": str(legacy_map.get("Last_Updated", "")).split(" ")[0],
-            "PlayerID": legacy_map.get("PlayerID", ""),
-            "Name": legacy_map.get("Name", ""),
-            "School": legacy_map.get("School", ""),
-            "Division": legacy_map.get("Division", ""),
+            "Last_Updated": source_map.get("Last_Updated", ""),
+            "Scraped_At_UTC": to_scraped_at_utc(source_map.get("Last_Updated", "")),
+            "Business_Date_ET": str(source_map.get("Last_Updated", "")).split(" ")[0],
+            "PlayerID": source_map.get("PlayerID", ""),
+            "Name": source_map.get("Name", ""),
+            "School": source_map.get("School", ""),
+            "Division": source_map.get("Division", ""),
         }
         for col in target_cols:
-            repaired_payload[col] = legacy_map.get(col, "")
+            repaired_payload[col] = source_map.get(col, "")
 
         repaired_row = build_row(headers, repaired_payload, target_cols, history=True)
         repairs.append({
