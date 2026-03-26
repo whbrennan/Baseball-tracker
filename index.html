@@ -125,6 +125,8 @@ td:first-child,td:nth-child(2),td:nth-child(3){text-align:left;}
 .perf-table-wrap{overflow-x:auto;}
 .perf-table-wrap .status{padding:20px;}
 .perf-table-wrap table{min-width:500px;}
+.perf-subtitle{font-size:.78rem;color:var(--muted);margin-top:6px;line-height:1.5;}
+.perf-note{font-size:.72rem;color:var(--muted);white-space:normal;min-width:180px;}
 /* DEBUG PANEL */
 #debug-panel{display:none;position:fixed;bottom:0;left:0;right:0;z-index:2000;background:#0d1117;border-top:2px solid #f87171;font-family:monospace;font-size:.75rem;max-height:220px;overflow-y:auto;}
 #debug-panel.open{display:block;}
@@ -318,6 +320,9 @@ td:first-child,td:nth-child(2),td:nth-child(3){text-align:left;}
         <span id="perf-date"></span>
         <button class="today-refresh" onclick="loadTodayPerformances()">↻ Refresh</button>
       </div>
+    </div>
+    <div id="perf-subtitle" class="perf-subtitle">
+      Today's games first, with overnight stat postings labeled by last completed game date.
     </div>
 
     <!-- Pitching -->
@@ -734,23 +739,29 @@ async function loadTodayPerformances() {
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
   let todayBatHist = [], todayPitHist = [], todayDefHist = [];
   let bh = [], ph = [], dh = [];
+  let latestCompletedGameDates = new Map();
 
   try {
-    [bh, ph, dh] = await Promise.all([
+    const [scheduleRows, battingRows, pitchingRows, defenseRows] = await Promise.all([
+      fetchSheet('Schedule'),
       fetchSheet('Batting_History'),
       fetchSheet('Pitching_History'),
       fetchSheet('Defense_History'),
     ]);
-    todayBatHist = bh.filter(r => getBusinessDate(r) === today);
-    todayPitHist = ph.filter(r => getBusinessDate(r) === today);
-    todayDefHist = dh.filter(r => getBusinessDate(r) === today);
+    bh = battingRows;
+    ph = pitchingRows;
+    dh = defenseRows;
+    latestCompletedGameDates = buildLatestCompletedGameDates(scheduleRows, today);
+    todayBatHist = bh.filter(r => shouldShowPerformanceRow(r, today, latestCompletedGameDates));
+    todayPitHist = ph.filter(r => shouldShowPerformanceRow(r, today, latestCompletedGameDates));
+    todayDefHist = dh.filter(r => shouldShowPerformanceRow(r, today, latestCompletedGameDates));
   } catch(e) {
     dbg(`Performances load error: ${e.message}`, 'warn');
   }
 
-  renderPerfTable(todayPitHist, ph, PERF_PIT_COLS, 'perf-pit-head', 'perf-pit-body', 'perf-pit-status', 'perf-pit-table', 'pitching');
-  renderPerfTable(todayBatHist, bh, PERF_BAT_COLS, 'perf-bat-head', 'perf-bat-body', 'perf-bat-status', 'perf-bat-table', 'batting');
-  renderPerfTable(todayDefHist, dh, PERF_DEF_COLS, 'perf-def-head', 'perf-def-body', 'perf-def-status', 'perf-def-table', 'defense');
+  renderPerfTable(todayPitHist, ph, PERF_PIT_COLS, 'perf-pit-head', 'perf-pit-body', 'perf-pit-status', 'perf-pit-table', 'pitching', latestCompletedGameDates);
+  renderPerfTable(todayBatHist, bh, PERF_BAT_COLS, 'perf-bat-head', 'perf-bat-body', 'perf-bat-status', 'perf-bat-table', 'batting', latestCompletedGameDates);
+  renderPerfTable(todayDefHist, dh, PERF_DEF_COLS, 'perf-def-head', 'perf-def-body', 'perf-def-status', 'perf-def-table', 'defense', latestCompletedGameDates);
 }
 
 const RATE_STATS = new Set(['AVG','OBP','SLG','OPS','ISO','BABIP','ERA','WHIP',
@@ -769,7 +780,7 @@ function getDelta(todayRow, prevRow, cols) {
   return delta;
 }
 
-function renderPerfTable(todayRows, allHistory, cols, headId, bodyId, statusId, tableId, type) {
+function renderPerfTable(todayRows, allHistory, cols, headId, bodyId, statusId, tableId, type, latestCompletedGameDates = new Map()) {
   const statusEl = document.getElementById(statusId);
   const tableEl  = document.getElementById(tableId);
 
@@ -790,14 +801,20 @@ function renderPerfTable(todayRows, allHistory, cols, headId, bodyId, statusId, 
   });
 
   const rows = Object.values(latestToday).map(r => {
+    const perfDate = getPerformanceDate(r, latestCompletedGameDates);
     const prevRow = allHistory
-      .filter(h => h.PlayerID === r.PlayerID && getBusinessDate(h) !== today)
+      .filter(h => h.PlayerID === r.PlayerID && getPerformanceDate(h, latestCompletedGameDates) !== perfDate)
       .sort((a, b) => getSortTimestamp(b).localeCompare(getSortTimestamp(a)))[0] || null;
-    return { row: r, delta: getDelta(r, prevRow, cols) };
+    return { row: r, delta: getDelta(r, prevRow, cols), perfDate };
   }).filter(({ delta }) =>
     // Only show players who have at least one counting stat change today
     cols.some(c => !RATE_STATS.has(c) && delta[c] && delta[c] !== '—')
-  );
+  ).sort((a, b) => {
+    const aToday = a.perfDate === today ? 1 : 0;
+    const bToday = b.perfDate === today ? 1 : 0;
+    if (aToday !== bToday) return bToday - aToday;
+    return getSortTimestamp(b.row).localeCompare(getSortTimestamp(a.row));
+  });
 
   if (!rows.length) {
     statusEl.innerHTML = 'No activity yet today.';
@@ -810,10 +827,10 @@ function renderPerfTable(todayRows, allHistory, cols, headId, bodyId, statusId, 
   tableEl.style.display  = '';
 
   document.getElementById(headId).innerHTML =
-    `<th>Player</th><th>School</th><th>Div</th>` +
+    `<th>Player</th><th>School</th><th>Div</th><th>Note</th>` +
     cols.map(c => `<th>${LABELS[c] || c}</th>`).join('');
 
-  document.getElementById(bodyId).innerHTML = rows.map(({ row, delta }) => {
+  document.getElementById(bodyId).innerHTML = rows.map(({ row, delta, perfDate }) => {
     const hotRow = cols.some(c => isHot(c, delta[c], type));
     const cells  = cols.map(c => {
       const hot = isHot(c, delta[c], type);
@@ -823,6 +840,7 @@ function renderPerfTable(todayRows, allHistory, cols, headId, bodyId, statusId, 
       <td><span class="player-link" onclick="openProfile('${row.PlayerID}','${type}')">${row.Name || ''}</span></td>
       <td style="font-size:.78rem;color:var(--muted)">${shortSchool(row.School)}</td>
       <td><span class="div-badge ${row.Division || ''}">${row.Division || ''}</span></td>
+      <td class="perf-note">${getPerformanceNote(row, perfDate, today)}</td>
       ${cells}
     </tr>`;
   }).join('');
@@ -837,6 +855,61 @@ const hasGames = r => {
 const getBusinessDate = r => r.Business_Date_ET || (r.Last_Updated || '').split(' ')[0] || '';
 const getSortTimestamp = r => r.Scraped_At_UTC || r.Last_Updated || '';
 const getDisplayDateLabel = r => getBusinessDate(r);
+const normalizeSchoolKey = s => (s || '')
+  .toLowerCase()
+  .replace(/\buniversity\b/g, '')
+  .replace(/\bcollege\b/g, '')
+  .replace(/\./g, '')
+  .replace(/&/g, 'and')
+  .replace(/\s+/g, ' ')
+  .trim();
+
+function buildLatestCompletedGameDates(scheduleRows, today) {
+  const latest = new Map();
+  scheduleRows.forEach(r => {
+    const date = r.DATE || '';
+    const result = r.RESULT || '';
+    if (!date || !result || date > today) return;
+    const key = normalizeSchoolKey(r.SCHOOL || '');
+    if (!key) return;
+    const prev = latest.get(key);
+    if (!prev || date > prev) latest.set(key, date);
+  });
+  return latest;
+}
+
+function getPerformanceDate(row, latestCompletedGameDates = new Map()) {
+  const businessDate = getBusinessDate(row);
+  const schoolKey = normalizeSchoolKey(row.School || '');
+  const latestCompleted = latestCompletedGameDates.get(schoolKey);
+  if (!latestCompleted) return businessDate;
+  return businessDate > latestCompleted ? latestCompleted : businessDate;
+}
+
+function shouldShowPerformanceRow(row, today, latestCompletedGameDates = new Map()) {
+  const businessDate = getBusinessDate(row);
+  const perfDate = getPerformanceDate(row, latestCompletedGameDates);
+  return perfDate === today || businessDate === today;
+}
+
+function formatDisplayDate(dateStr) {
+  if (!dateStr) return '';
+  const parts = String(dateStr).split('-').map(Number);
+  if (parts.length !== 3 || parts.some(Number.isNaN)) return dateStr;
+  const dt = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+  return dt.toLocaleDateString([], { month:'short', day:'numeric', timeZone:'UTC' });
+}
+
+function formatUpdatedLabel(lastUpdated) {
+  if (!lastUpdated) return '';
+  const [datePart, timePart=''] = String(lastUpdated).split(' ');
+  return `${formatDisplayDate(datePart)} ${timePart}`.trim();
+}
+
+function getPerformanceNote(row, perfDate, today) {
+  if (perfDate === today) return 'Today';
+  return `From ${formatDisplayDate(perfDate)} game · Updated ${formatUpdatedLabel(row.Last_Updated)}`;
+}
 
 function filterRows(data, divId, searchId) {
   const div = document.getElementById(divId).value;
