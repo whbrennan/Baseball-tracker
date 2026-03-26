@@ -244,6 +244,183 @@ def current_timestamps():
     }
 
 
+BASE_FIELDS = ["Last_Updated", "PlayerID", "Name", "School", "Division"]
+HISTORY_PREFIX_FIELDS = ["Last_Updated", "Scraped_At_UTC", "Business_Date_ET", "PlayerID", "Name", "School", "Division"]
+
+HEADER_ALIASES = {
+    "lastupdated": "Last_Updated",
+    "lastupdatedet": "Last_Updated",
+    "lastupdatedeastern": "Last_Updated",
+    "scrapedatutc": "Scraped_At_UTC",
+    "scrapedat": "Scraped_At_UTC",
+    "scrapedtimeutc": "Scraped_At_UTC",
+    "businessdateet": "Business_Date_ET",
+    "businessdate": "Business_Date_ET",
+    "gamedateet": "Business_Date_ET",
+    "playerid": "PlayerID",
+    "player": "PlayerID",
+    "playername": "Name",
+    "schoolname": "School",
+}
+
+
+def normalize_header(text):
+    return "".join(ch.lower() for ch in str(text or "") if ch.isalnum())
+
+
+def canonicalize_header(header):
+    text = str(header or "").strip()
+    if not text:
+        return ""
+    normalized = normalize_header(text)
+    return HEADER_ALIASES.get(normalized, text)
+
+
+def get_headers(ws):
+    return [h.strip() for h in ws.row_values(1)]
+
+
+def get_expected_headers(target_cols, history=False):
+    return (HISTORY_PREFIX_FIELDS if history else BASE_FIELDS) + target_cols
+
+
+def get_effective_headers(headers, target_cols, history=False):
+    effective = [canonicalize_header(header) for header in headers]
+    expected = get_expected_headers(target_cols, history=history)
+
+    # Fallback for sheets where inserted columns have blank or unrecognized labels.
+    if len(effective) >= len(expected):
+        for index, expected_header in enumerate(expected):
+            if not effective[index]:
+                effective[index] = expected_header
+
+    return effective
+
+
+def build_row(headers, payload, target_cols, history=False):
+    effective_headers = get_effective_headers(headers, target_cols, history=history)
+    return [str(payload.get(header, "")) for header in effective_headers]
+
+
+def looks_like_player_id(value):
+    text = str(value or "").strip()
+    return bool(text) and " " not in text and ":" not in text and text.count("-") <= 1
+
+
+def looks_like_datetime(value):
+    text = str(value or "").strip()
+    if not text:
+        return False
+    try:
+        datetime.strptime(text, "%Y-%m-%d %H:%M")
+        return True
+    except ValueError:
+        return False
+
+
+def looks_like_date(value):
+    text = str(value or "").strip()
+    if not text:
+        return False
+    try:
+        datetime.strptime(text, "%Y-%m-%d")
+        return True
+    except ValueError:
+        return False
+
+
+def to_scraped_at_utc(last_updated_et):
+    text = str(last_updated_et or "").strip()
+    if not text:
+        return ""
+    try:
+        dt_et = datetime.strptime(text, "%Y-%m-%d %H:%M").replace(tzinfo=EASTERN)
+        return dt_et.astimezone(UTC).strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return ""
+
+
+def build_current_payload(player, mapped, target_cols):
+    ts = current_timestamps()
+    payload = {
+        "Last_Updated": ts["last_updated_et"],
+        "PlayerID": player["PlayerID"],
+        "Name": player["Name"],
+        "School": player["School"],
+        "Division": player["Division"],
+    }
+    for col in target_cols:
+        payload[col] = str(mapped.get(col, ""))
+    return payload
+
+
+def build_history_payload(player, mapped, target_cols):
+    ts = current_timestamps()
+    payload = build_current_payload(player, mapped, target_cols)
+    payload["Scraped_At_UTC"] = ts["scraped_at_utc"]
+    payload["Business_Date_ET"] = ts["business_date_et"]
+    return payload
+
+
+def history_row_needs_repair(row_map):
+    if not row_map:
+        return False
+    scraped_at = row_map.get("Scraped_At_UTC", "")
+    player_id = row_map.get("PlayerID", "")
+    business_date = row_map.get("Business_Date_ET", "")
+    return (
+        looks_like_player_id(scraped_at)
+        and not looks_like_datetime(scraped_at)
+        and not looks_like_player_id(player_id)
+        and not looks_like_date(business_date)
+    )
+
+
+def repair_history_table(sheet, tab, target_cols):
+    ws = sheet.worksheet(tab)
+    headers = get_headers(ws)
+    effective_headers = get_effective_headers(headers, target_cols, history=True)
+    print(f"    {tab} headers: {headers}")
+    print(f"    {tab} mapped headers: {effective_headers}")
+    legacy_headers = BASE_FIELDS + target_cols
+    all_values = ws.get_all_values()
+    repairs = []
+
+    for row_index, raw_row in enumerate(all_values[1:], start=2):
+        padded_row = raw_row + [""] * max(0, len(effective_headers) - len(raw_row))
+        row_map = {effective_headers[i]: padded_row[i] for i in range(len(effective_headers))}
+        if not history_row_needs_repair(row_map):
+            continue
+
+        legacy_values = padded_row[:len(legacy_headers)]
+        legacy_map = {
+            legacy_headers[i]: legacy_values[i] if i < len(legacy_values) else ""
+            for i in range(len(legacy_headers))
+        }
+        repaired_payload = {
+            "Last_Updated": legacy_map.get("Last_Updated", ""),
+            "Scraped_At_UTC": to_scraped_at_utc(legacy_map.get("Last_Updated", "")),
+            "Business_Date_ET": str(legacy_map.get("Last_Updated", "")).split(" ")[0],
+            "PlayerID": legacy_map.get("PlayerID", ""),
+            "Name": legacy_map.get("Name", ""),
+            "School": legacy_map.get("School", ""),
+            "Division": legacy_map.get("Division", ""),
+        }
+        for col in target_cols:
+            repaired_payload[col] = legacy_map.get(col, "")
+
+        repaired_row = build_row(headers, repaired_payload, target_cols, history=True)
+        repairs.append({
+            "range": f"A{row_index}",
+            "values": [repaired_row],
+        })
+
+    if repairs:
+        ws.batch_update(repairs)
+        print(f"    OK: {tab} repaired {len(repairs)} misaligned row(s)")
+    return len(repairs)
+
+
 def stats_changed(previous_row, mapped, target_cols):
     """Return True when any tracked stat differs from the previous row."""
     if previous_row is None:
@@ -337,15 +514,15 @@ def write_stats(sheet, tab, player, mapped, target_cols):
     """Update current stats row. Returns previous row for comparison."""
     ws  = sheet.worksheet(tab)
     pid = player["PlayerID"]
-    ts = current_timestamps()
-    row = [ts["last_updated_et"], pid, player["Name"], player["School"], player["Division"]]
-    row += [str(mapped.get(col, "")) for col in target_cols]
+    headers = get_headers(ws)
+    row = build_row(headers, build_current_payload(player, mapped, target_cols), target_cols, history=False)
     existing = ws.get_all_records()
     for i, r in enumerate(existing):
-        if r.get("PlayerID") == pid:
+        record = {canonicalize_header(k): v for k, v in r.items()}
+        if record.get("PlayerID") == pid:
             ws.update(values=[row], range_name=f"A{i+2}")
             print(f"    OK: {tab} updated")
-            return r
+            return record
     ws.append_row(row)
     print(f"    OK: {tab} added")
     return None
@@ -356,17 +533,8 @@ def write_history(sheet, tab, player, mapped, target_cols, previous_row=None):
     if not stats_changed(previous_row, mapped, target_cols):
         print(f"    OK: {tab} unchanged -- snapshot skipped")
         return False
-    ts = current_timestamps()
-    row = [
-        ts["last_updated_et"],
-        ts["scraped_at_utc"],
-        ts["business_date_et"],
-        player["PlayerID"],
-        player["Name"],
-        player["School"],
-        player["Division"],
-    ]
-    row += [str(mapped.get(col, "")) for col in target_cols]
+    headers = get_headers(ws)
+    row = build_row(headers, build_history_payload(player, mapped, target_cols), target_cols, history=True)
     ws.append_row(row)
     print(f"    OK: {tab} snapshot saved")
     return True
@@ -383,6 +551,9 @@ def log(sheet, player, status, notes=""):
 def main(test_player_id=None):
     print("Connecting to Google Sheets...")
     sheet   = connect()
+    repair_history_table(sheet, "Batting_History", BATTING_COLS)
+    repair_history_table(sheet, "Pitching_History", PITCHING_COLS)
+    repair_history_table(sheet, "Defense_History", DEFENSE_COLS)
     players = get_players(sheet)
     if test_player_id:
         players = [p for p in players if p["PlayerID"] == test_player_id]
