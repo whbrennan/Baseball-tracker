@@ -767,6 +767,17 @@ async function loadTodayPerformances() {
 const RATE_STATS = new Set(['AVG','OBP','SLG','OPS','ISO','BABIP','ERA','WHIP',
                              'K_per_9','BB_per_9','K_BB','xFIP','BB_pct','K_pct','FLD%']);
 
+function formatStatDisplay(value, col, type) {
+  if (value === null || value === undefined || value === '' || value === '—' || value === '--') {
+    return value || '—';
+  }
+  if (type === 'pitching' && col === 'IP') {
+    const num = parseFloat(value);
+    return Number.isNaN(num) ? value : num.toFixed(1);
+  }
+  return value;
+}
+
 function getDelta(todayRow, prevRow, cols) {
   const delta = { ...todayRow };
   cols.forEach(c => {
@@ -834,7 +845,7 @@ function renderPerfTable(todayRows, allHistory, cols, headId, bodyId, statusId, 
     const hotRow = cols.some(c => isHot(c, delta[c], type));
     const cells  = cols.map(c => {
       const hot = isHot(c, delta[c], type);
-      return `<td class="${hot ? 'hot-val' : ''}">${delta[c] || '—'}</td>`;
+      return `<td class="${hot ? 'hot-val' : ''}">${formatStatDisplay(delta[c], c, type)}</td>`;
     }).join('');
     return `<tr class="${hotRow ? 'hot-row' : ''}">
       <td><span class="player-link" onclick="openProfile('${row.PlayerID}','${type}')">${row.Name || ''}</span></td>
@@ -981,7 +992,7 @@ function buildTable(rows, cols, sortState, headId, bodyId, statusId, tableId, so
       const prev=history.length?getPrev(history,r.PlayerID):null;
       const streak=history.length?getStreak(history,r.PlayerID,type):0;
       const hotRow=cols.some(c=>isHot(c,r[c],type));
-      const cells=cols.map(c=>`<td class="${isHot(c,r[c],type)?'hot-val':''}">${r[c]||'—'}${trendArrow(c,r[c],prev)}</td>`).join('');
+      const cells=cols.map(c=>`<td class="${isHot(c,r[c],type)?'hot-val':''}">${formatStatDisplay(r[c], c, type)}${trendArrow(c,r[c],prev)}</td>`).join('');
       const fire=streak>=3?'🔥':'';
       return `<tr class="${hotRow?'hot-row':''}">
         <td><span class="player-link" onclick="openProfile('${r.PlayerID}','${type}')">${r.Name||''}${fire}</span></td>
