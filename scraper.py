@@ -33,7 +33,9 @@ BATTING_MAP = {
     "2B"     : "2B",   "3B"  : "3B",   "HR"  : "HR",
     "RBI"    : "RBI",  "BB"  : "BB",   "SO"  : "SO",
     "HBP"    : "HBP",  "SH"  : "SAC",  "SF"  : "SF",
-    "SB-ATT" : ("SB", "CS"),
+    # Stolen bases are shown as steals-attempts ("12-14"). CS is derived from
+    # them in map_row: caught stealing = attempts - steals.
+    "SB-ATT" : ("SB", "SB_ATT"),
     "AVG"    : "AVG",  "OB%" : "OBP",  "SLG%": "SLG",  "OPS": "OPS",
 }
 
@@ -209,6 +211,14 @@ def align_headers(hdrs, cells):
     return hdrs
 
 
+def caught_stealing(sb, attempts):
+    """CS from steals and attempts as strings; "" when either is missing."""
+    try:
+        return str(max(int(attempts) - int(sb), 0))
+    except (TypeError, ValueError):
+        return ""
+
+
 def map_row(raw, col_map):
     out = {}
     for src, dest in col_map.items():
@@ -219,6 +229,9 @@ def map_row(raw, col_map):
             out[dest[1]] = v2
         else:
             out[dest] = val
+
+    if "SB_ATT" in out:
+        out["CS"] = caught_stealing(out.get("SB"), out.pop("SB_ATT"))
 
     # ── Pitching computed ─────────────────────────────────────────────────────
     try:
@@ -283,6 +296,8 @@ def zero_stats(col_map):
             out[dest[1]] = "0"
         else:
             out[dest] = "0"
+    if "SB_ATT" in out:
+        out["CS"] = caught_stealing(out["SB"], out.pop("SB_ATT"))
     return out
 
 
