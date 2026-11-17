@@ -1,0 +1,34 @@
+name: Check Players Sheet
+
+# Manual only. Checks the Players tab for typos and stray spaces.
+# Leave "apply" unticked for a dry run that only reports what it would change.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Write the fixes to the sheet (untick for a dry run)"
+        type: boolean
+        default: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install gspread google-auth
+
+      - name: Check Players tab
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+        run: python fix_players_sheet.py ${{ inputs.apply && '--apply' || '' }}
