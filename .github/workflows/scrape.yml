@@ -6,9 +6,19 @@ on:
     - cron: '0 16,18,20,22,0,2 * * *'
   workflow_dispatch:  # allows manual trigger from GitHub anytime
 
+# One stats run at a time: a manual run waits for a scheduled one (and vice
+# versa) instead of both writing the same sheet rows. The Players-tab fixer
+# shares this group so it never edits Players mid-scrape.
+concurrency:
+  group: sheet-stats
+  cancel-in-progress: false
+
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    # A normal run takes about 6 minutes; stop a hung browser or site long
+    # before GitHub's 6-hour default.
+    timeout-minutes: 20
 
     steps:
       - name: Check out code
@@ -17,30 +27,21 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
 
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Install Playwright system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libatk1.0-0t64 \
-            libatk-bridge2.0-0t64 \
-            libcups2t64 \
-            libdrm2 \
-            libxkbcommon0 \
-            libatspi2.0-0t64 \
-            libxcomposite1 \
-            libxdamage1 \
-            libxfixes3 \
-            libxrandr2 \
-            libgbm1 \
-            libasound2t64
+      - name: Cache Playwright browser
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
 
-      - name: Install Playwright browsers
-        run: playwright install chromium
+      - name: Install Chromium and its system libraries
+        run: python -m playwright install --with-deps chromium
 
       - name: Run scraper
         env:

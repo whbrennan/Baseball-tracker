@@ -10,6 +10,11 @@ on:
         type: boolean
         default: false
 
+# Shares the stats scraper's group so the Players tab isn't edited mid-scrape.
+concurrency:
+  group: sheet-stats
+  cancel-in-progress: false
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -22,10 +27,12 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
 
       - name: Install dependencies
-        run: pip install gspread google-auth
+        run: pip install -r requirements.txt
 
       - name: Check Players tab
         env:
