@@ -13,12 +13,16 @@ import os
 import re
 import sys
 import time
+from collections import Counter
 from datetime import datetime
 
 import gspread
 import requests
 from bs4 import BeautifulSoup
 from google.oauth2.service_account import Credentials
+from gspread.utils import rowcol_to_a1
+
+from run_status import record_run
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -47,6 +51,10 @@ SHEET_COLUMNS = [
 
 # Schools whose pages embed schedule data as a Nuxt JSON blob
 JSON_LAYOUT_SCHOOLS = {"George Washington"}
+
+# If a school's scrape returns fewer than this share of the games it had last
+# time (same season), assume the parse broke and keep the previous rows.
+MIN_KEEP_FRACTION = 0.5
 
 
 # ── Google Sheets auth ────────────────────────────────────────────────────────
@@ -398,17 +406,81 @@ def scrape_school(school_cfg):
 
 # ── Write to Google Sheets ────────────────────────────────────────────────────
 
-def write_to_sheet(sheet, all_games):
+def read_existing_games(sheet):
+    """Return (games as dicts, number of sheet rows in use incl. header)."""
+    values = sheet.get_all_values()
+    if not values:
+        return [], 0
+    headers = [h.strip().upper() for h in values[0]]
+    games = []
+    for row in values[1:]:
+        if not any(cell.strip() for cell in row):
+            continue
+        games.append({h: (row[i] if i < len(row) else "") for i, h in enumerate(headers) if h})
+    return games, len(values)
+
+
+def _season(games):
+    """Most common year among the games' dates, or None."""
+    years = Counter(str(g.get("DATE", ""))[:4] for g in games if g.get("DATE"))
+    return years.most_common(1)[0][0] if years else None
+
+
+def merge_with_previous(school_names, new_by_school, previous_games):
+    """Combine this run's games with the sheet's existing rows, per school.
+
+    A school keeps its previous rows when this run found no games for it, or
+    (within the same season) far fewer than before, since that almost always
+    means the site was down or its layout changed rather than games vanishing.
+    Schools no longer in schools.json are dropped.
+
+    Returns (games, kept) where kept maps school -> reason previous rows were kept.
+    """
+    previous_by_school = {}
+    for game in previous_games:
+        previous_by_school.setdefault(game.get("SCHOOL", ""), []).append(game)
+
+    merged, kept = [], {}
+    for school in school_names:
+        new = new_by_school.get(school, [])
+        previous = previous_by_school.get(school, [])
+        if previous and not new:
+            kept[school] = f"no games scraped; kept {len(previous)} previous rows"
+            merged.extend(previous)
+        elif (previous and _season(new) == _season(previous)
+              and len(new) < len(previous) * MIN_KEEP_FRACTION):
+            kept[school] = (f"only {len(new)} games scraped vs {len(previous)} before; "
+                            f"kept previous rows")
+            merged.extend(previous)
+        else:
+            merged.extend(new)
+    return merged, kept
+
+
+def write_to_sheet(sheet, all_games, previous_row_count):
+    """Overwrite the sheet in place, then clear any leftover rows below.
+
+    Writing over the existing data (instead of clearing first) means a reader
+    never sees an empty schedule, and a failed write leaves the old data intact.
+    """
     print(f"\nWriting {len(all_games)} total games to '{SHEET_NAME}'...")
     rows = [SHEET_COLUMNS] + [[g.get(c, "") for c in SHEET_COLUMNS] for g in all_games]
-    sheet.clear()
-    sheet.update(rows, value_input_option="RAW")
+    if len(rows) > sheet.row_count:
+        sheet.add_rows(len(rows) - sheet.row_count)
+    if len(SHEET_COLUMNS) > sheet.col_count:
+        sheet.add_cols(len(SHEET_COLUMNS) - sheet.col_count)
+    sheet.update(values=rows, range_name="A1", value_input_option="RAW")
+    if previous_row_count > len(rows):
+        start = rowcol_to_a1(len(rows) + 1, 1)
+        end = rowcol_to_a1(previous_row_count, max(len(SHEET_COLUMNS), sheet.col_count))
+        sheet.batch_clear([f"{start}:{end}"])
     print(f"Done. {len(all_games)} rows written.")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
+    """Scrape every school. Returns True if the run failed overall."""
     if not os.path.exists(SCHOOLS_FILE):
         sys.exit(f"ERROR: {SCHOOLS_FILE} not found.")
 
@@ -417,22 +489,37 @@ def main():
 
     print(f"Scraping {len(schools)} schools (year={CURRENT_YEAR})...\n")
 
-    all_games = []
+    new_by_school, errors = {}, {}
     for school_cfg in schools:
+        school = school_cfg.get("school", "?")
         try:
-            games = scrape_school(school_cfg)
-            all_games.extend(games)
+            new_by_school[school] = scrape_school(school_cfg)
         except Exception as e:
-            print(f"  [error] {school_cfg.get('school', '?')}: {e}")
+            print(f"  [error] {school}: {e}")
+            errors[school] = str(e)
         time.sleep(1)
 
-    if not all_games:
-        print("WARNING: no games scraped — sheet not updated.")
-        return
-
     sheet = get_sheet()
-    write_to_sheet(sheet, all_games)
+    previous_games, previous_row_count = read_existing_games(sheet)
+    school_names = [s.get("school", "?") for s in schools]
+    all_games, kept = merge_with_previous(school_names, new_by_school, previous_games)
+
+    ok_schools, failed_schools = [], []
+    for school in school_names:
+        if school in errors or school in kept or not new_by_school.get(school):
+            reason = errors.get(school) or kept.get(school) or "no games scraped"
+            failed_schools.append(f"{school}: {reason}")
+        else:
+            ok_schools.append(school)
+
+    if all_games:
+        write_to_sheet(sheet, all_games, previous_row_count)
+    else:
+        print("WARNING: no games scraped and none on the sheet — sheet not updated.")
+
+    return record_run(sheet.spreadsheet, "Schedule scraper", ok_schools, failed_schools)
 
 
 if __name__ == "__main__":
-    main()
+    if main():
+        sys.exit(1)
