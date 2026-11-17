@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import json
 import time
@@ -16,6 +17,12 @@ SPREADSHEET_ID    = os.environ.get("SPREADSHEET_ID")
 GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDENTIALS")
 PUSHOVER_USER     = os.environ.get("PUSHOVER_USER_KEY")
 PUSHOVER_TOKEN    = os.environ.get("PUSHOVER_API_TOKEN")
+
+BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/120.0.0.0 Safari/537.36"
+)
 
 UTC = ZoneInfo("UTC")
 EASTERN = ZoneInfo("America/New_York")
@@ -595,6 +602,120 @@ def find_table(page, stat_type):
     return None, []
 
 
+# Newer Sidearm stats pages show only one table at a time (chosen from a
+# dropdown) but embed every player's season line in the page's Nuxt data.
+# Overall stats live under "individualStats" (conference under
+# "individualStatsConference"), one list per stat type.
+EMBEDDED_LISTS = {
+    "pitching": "individualPitchingStats",
+    "defense" : "individualFieldingStats",
+}
+
+
+_SCRIPT_RE = re.compile(r"<script[^>]*>(.*?)</script>", re.S | re.I)
+_HAS_PAYLOAD_JS = "() => [...document.scripts].some(s => (s.textContent || '').includes('ShallowReactive'))"
+
+
+def _embedded_payload(page):
+    """Return the page's Nuxt flat reference array, or None.
+
+    Reads the live DOM first. On some first loads the site's own scripts are
+    still rewriting the page and the data isn't visible there, so fall back to
+    the server's original HTML, which always contains it.
+    """
+    for attempt in range(2):
+        try:
+            page.wait_for_function(_HAS_PAYLOAD_JS, timeout=15000)
+        except Exception:
+            pass
+        payload = _parse_payload(
+            page.eval_on_selector_all("script", "els => els.map(e => e.textContent || '')"))
+        if payload is not None:
+            return payload
+        if attempt == 0:
+            print("    Note: embedded stats not on page yet -- reloading once")
+            try:
+                page.reload(wait_until="domcontentloaded", timeout=60000)
+            except Exception as e:
+                print(f"    Warning: reload failed: {e}")
+    try:
+        cookies = {c["name"]: c["value"] for c in page.context.cookies(page.url)}
+        resp = requests.get(page.url, headers={"User-Agent": BROWSER_UA}, cookies=cookies, timeout=30)
+        resp.raise_for_status()
+        return _parse_payload(_SCRIPT_RE.findall(resp.text))
+    except Exception as e:
+        print(f"    Warning: could not fetch raw page for embedded stats: {e}")
+        return None
+
+
+def _parse_payload(scripts):
+    for txt in scripts:
+        if "ShallowReactive" not in txt:
+            continue
+        start = txt.find("[[")
+        if start == -1:
+            start = txt.find("[{")
+        if start == -1:
+            continue
+        try:
+            return json.loads(txt[start:])
+        except ValueError:
+            continue
+    return None
+
+
+def _embedded_raw(stat_type, rec):
+    """Convert an embedded player record to the stats-table header names map_row expects."""
+    def g(key):
+        return str(rec.get(key, "") or "")
+    if stat_type == "defense":
+        return {
+            "C": g("totalChances"), "PO": g("putouts"), "A": g("assists"), "E": g("errors"),
+            "FLD%": g("fieldingPercentage"), "DP": g("doublePlays"), "SBA": g("stolenBasesAgainst"),
+            "CSB": g("caughtStealingBy"), "PB": g("passedBalls"), "CI": g("catchersInterference"),
+        }
+    return {
+        "APP-GS": f"{g('appearances')}-{g('gamesStarted')}", "W-L": f"{g('wins')}-{g('losses')}",
+        "SV": g("saves"), "IP": g("inningsPitched"), "H": g("hitsAllowed"), "R": g("runsAllowed"),
+        "ER": g("earnedRunsAllowed"), "BB": g("walksAllowed"), "SO": g("strikeouts"),
+        "HBP": g("hitBatters"), "ERA": g("earnedRunAverage"), "WHIP": g("whip"),
+    }
+
+
+def embedded_player_stats(page, stat_type, jersey):
+    """Read one player's overall season line from the page's embedded data.
+
+    Returns the raw stats dict, {} if the stats list exists but the jersey isn't
+    in it, or None if the page has no embedded stats for this stat type.
+    """
+    list_key = EMBEDDED_LISTS.get(stat_type)
+    raw = _embedded_payload(page) if list_key else None
+    if raw is None:
+        return None
+
+    def res(v):
+        if isinstance(v, int):
+            return raw[v] if 0 <= v < len(raw) else ""  # negative = undefined/null
+        return v
+
+    for obj in raw:
+        if not (isinstance(obj, dict) and "individualStats" in obj):
+            continue
+        container = res(obj["individualStats"])
+        players = res(container.get(list_key)) if isinstance(container, dict) else None
+        if not isinstance(players, list):
+            continue
+        for ref in players:
+            rec = res(ref)
+            if not isinstance(rec, dict):
+                continue
+            rec = {k: res(v) for k, v in rec.items()}
+            if str(rec.get("playerUniform", "")).strip() == jersey:
+                return _embedded_raw(stat_type, rec)
+        return {}
+    return None
+
+
 def scrape(page, player, stat_type):
     """Return (stats, note) for one stat type.
 
@@ -611,18 +732,19 @@ def scrape(page, player, stat_type):
     time.sleep(5)
 
     # ── Tab navigation for SIDEARM sites ─────────────────────────────────────
+    # Known dropdown-layout sites: try the dropdown first. Any other site (or a
+    # failed click) falls back to the page's embedded data below.
     if stat_type == "pitching":
-        if stat_type == "pitching":
-            if "gwsports.com" in player["Stats_URL"]:  # ← add this line
-                try:
-                    trigger = page.locator("button.s-select-box", has_text="Batting").first
-                    trigger.click(timeout=5000)
-                    time.sleep(1)
-                    pitch_option = page.locator("li.s-select__option-item", has_text="Pitching").first
-                    pitch_option.click(timeout=5000)
-                    time.sleep(3)
-                except Exception as e:
-                    print(f"    Warning: Pitching tab click failed: {e}")
+        if "gwsports.com" in player["Stats_URL"]:
+            try:
+                trigger = page.locator("button.s-select-box", has_text="Batting").first
+                trigger.click(timeout=5000)
+                time.sleep(1)
+                pitch_option = page.locator("li.s-select__option-item", has_text="Pitching").first
+                pitch_option.click(timeout=5000)
+                time.sleep(3)
+            except Exception as e:
+                print(f"    Warning: Pitching tab click failed: {e}")
 
     if stat_type == "defense":
         if "gwsports.com" in player["Stats_URL"] or "ecupirates.com" in player["Stats_URL"]:
@@ -639,7 +761,15 @@ def scrape(page, player, stat_type):
     col_map = {"batting": BATTING_MAP, "pitching": PITCHING_MAP, "defense": DEFENSE_MAP}[stat_type]
     table, hdrs = find_table(page, stat_type)
     if not table:
-        raise ScrapeError(f"No {stat_type} table found at {player['Stats_URL']}")
+        embedded = embedded_player_stats(page, stat_type, jersey)
+        if embedded is None:
+            raise ScrapeError(f"No {stat_type} table or embedded stats found at {player['Stats_URL']}")
+        if embedded:
+            print(f"    Note: {stat_type} read from the page's embedded data")
+            return map_row(embedded, col_map), ""
+        note = f"Jersey #{jersey} not listed in the {stat_type} stats"
+        print(f"    Note: {note} -- treating as no appearances yet")
+        return zero_stats(col_map), note
 
     hdrs = [h.upper() for h in hdrs]
 
@@ -773,10 +903,7 @@ def main(test_player_id=None):
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True)
-        context = browser.new_context(user_agent=(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"))
+        context = browser.new_context(user_agent=BROWSER_UA)
         page = context.new_page()
 
         for player in players:
