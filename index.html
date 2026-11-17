@@ -598,7 +598,7 @@ async function loadTodayGames(manual = false) {
   try {
     const [games, espnScores] = await Promise.all([
       fetchTodaySchedule(todayStr),
-      fetchEspnScores(),
+      fetchEspnScores(todayStr),
     ]);
     renderTodayGames(games, espnScores);
     document.getElementById('today-last-updated').textContent =
@@ -632,9 +632,12 @@ async function fetchTodaySchedule(todayStr) {
     .sort((a, b) => sortTime(a.time) - sortTime(b.time));
 }
 
-async function fetchEspnScores() {
+async function fetchEspnScores(todayStr) {
   try {
-    const resp = await fetch(ESPN_SCOREBOARD);
+    // Ask for the Eastern-time date explicitly; ESPN's default "today" can
+    // differ late in the evening, and limit guards against a truncated list.
+    const espnDate = todayStr.replaceAll('-', '');
+    const resp = await fetch(`${ESPN_SCOREBOARD}?dates=${espnDate}&limit=500`);
     const data = await resp.json();
     const map  = {};
     for (const ev of (data.events || [])) {
