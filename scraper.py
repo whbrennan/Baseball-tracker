@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import time
 import requests
@@ -7,6 +8,8 @@ from google.oauth2.service_account import Credentials
 from playwright.sync_api import sync_playwright
 from datetime import datetime
 from zoneinfo import ZoneInfo
+
+from run_status import record_run
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 SPREADSHEET_ID    = os.environ.get("SPREADSHEET_ID")
@@ -57,6 +60,53 @@ PITCHING_COLS = ["G","GS","W","L","SV","IP","H","R","ER","BB","SO",
                  "HBP","ERA","WHIP","K_per_9","BB_per_9","K_BB","xFIP",
                  "BB_pct","K_pct"]
 DEFENSE_COLS  = ["TC","PO","A","E","FLD%","DP","SBA","CSB","PB","CI"]
+
+# ── FAILURE HANDLING ──────────────────────────────────────────────────────────
+class ScrapeError(Exception):
+    """A stats page couldn't be read reliably. Nothing is written for that stat type."""
+
+
+# Season-cumulative stats that can only go up during a season. If a scrape
+# returns lower values than the sheet already holds, the scrape is wrong
+# (wrong jersey, page not loaded, wrong table) and must not overwrite good data.
+COUNTING_STATS = {
+    "batting" : ["G", "AB", "H", "BB", "SO"],
+    "pitching": ["G", "IP", "SO", "BB"],
+    "defense" : ["TC", "PO", "A"],
+}
+
+
+def _to_number(value):
+    text = str(value if value is not None else "").strip()
+    if text in ("", "-", "--"):
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def same_season(previous_row):
+    """True if the existing sheet row was written during the current season.
+
+    College seasons run Feb-June, so the calendar year of Last_Updated
+    identifies the season. Across a season rollover stats legitimately reset.
+    """
+    last_updated = str((previous_row or {}).get("Last_Updated", "")).strip()
+    return last_updated[:4] == str(datetime.now(EASTERN).year)
+
+
+def stats_went_backwards(previous_row, mapped, stat_type):
+    """Return [(stat, old, new)] for counting stats that decreased this season."""
+    if not previous_row or not same_season(previous_row):
+        return []
+    drops = []
+    for col in COUNTING_STATS[stat_type]:
+        old = _to_number(previous_row.get(col))
+        new = _to_number(mapped.get(col))
+        if old is not None and new is not None and new < old:
+            drops.append((col, previous_row.get(col), mapped.get(col)))
+    return drops
 
 # ── THRESHOLD ALERTS ──────────────────────────────────────────────────────────
 BATTING_THRESHOLDS = {
@@ -546,10 +596,16 @@ def find_table(page, stat_type):
 
 
 def scrape(page, player, stat_type):
+    """Return (stats, note) for one stat type.
+
+    Raises ScrapeError when the page can't be read (no jersey configured, no
+    stats table found). A player missing from a table that loaded fine is
+    normal before their first appearance, so that returns zeros with a note;
+    main() refuses the zeros if the player already has stats this season.
+    """
     jersey = str(player.get("Jersey", "")).strip()
     if not jersey:
-        print(f"    Warning: No jersey number -- writing zeros")
-        return zero_stats({"batting": BATTING_MAP, "pitching": PITCHING_MAP, "defense": DEFENSE_MAP}[stat_type])
+        raise ScrapeError("No jersey number in the Players sheet")
 
     page.goto(player["Stats_URL"], wait_until="domcontentloaded", timeout=60000)
     time.sleep(5)
@@ -583,8 +639,7 @@ def scrape(page, player, stat_type):
     col_map = {"batting": BATTING_MAP, "pitching": PITCHING_MAP, "defense": DEFENSE_MAP}[stat_type]
     table, hdrs = find_table(page, stat_type)
     if not table:
-        print(f"    Warning: No {stat_type} table found -- writing zeros")
-        return zero_stats(col_map)
+        raise ScrapeError(f"No {stat_type} table found at {player['Stats_URL']}")
 
     hdrs = [h.upper() for h in hdrs]
 
@@ -595,28 +650,32 @@ def scrape(page, player, stat_type):
         aligned = align_headers(hdrs, cells)
         if cells[0].strip() == jersey:
             raw = {aligned[i]: cells[i] for i in range(min(len(aligned), len(cells)))}
-            return map_row(raw, col_map)
+            return map_row(raw, col_map), ""
 
-    print(f"    Warning: Jersey #{jersey} not found -- writing zeros")
-    return zero_stats(col_map)
+    note = f"Jersey #{jersey} not listed in the {stat_type} table"
+    print(f"    Note: {note} -- treating as no appearances yet")
+    return zero_stats(col_map), note
 
 # ── SHEET WRITING ─────────────────────────────────────────────────────────────
-def write_stats(sheet, tab, player, mapped, target_cols):
-    """Update current stats row. Returns previous row for comparison."""
-    ws  = sheet.worksheet(tab)
-    pid = player["PlayerID"]
-    headers = get_headers(ws)
-    row = build_row(headers, build_current_payload(player, mapped, target_cols), target_cols, history=False)
-    existing = ws.get_all_records()
-    for i, r in enumerate(existing):
+def read_current_row(ws, pid):
+    """Return (sheet_row_number, record) for a player's current row, or (None, None)."""
+    for i, r in enumerate(ws.get_all_records()):
         record = {canonicalize_header(k): v for k, v in r.items()}
         if record.get("PlayerID") == pid:
-            ws.update(values=[row], range_name=f"A{i+2}")
-            print(f"    OK: {tab} updated")
-            return record
-    ws.append_row(row)
-    print(f"    OK: {tab} added")
-    return None
+            return i + 2, record
+    return None, None
+
+
+def write_stats(ws, row_number, player, mapped, target_cols):
+    """Overwrite the player's current stats row, or append one if new."""
+    headers = get_headers(ws)
+    row = build_row(headers, build_current_payload(player, mapped, target_cols), target_cols, history=False)
+    if row_number:
+        ws.update(values=[row], range_name=f"A{row_number}")
+        print(f"    OK: {ws.title} updated")
+    else:
+        ws.append_row(row)
+        print(f"    OK: {ws.title} added")
 
 
 def write_history(sheet, tab, player, mapped, target_cols, previous_row=None):
@@ -632,14 +691,71 @@ def write_history(sheet, tab, player, mapped, target_cols, previous_row=None):
 
 
 def log(sheet, player, status, notes=""):
+    """Append to Scrape_Log. Best-effort: a logging failure mustn't stop the run."""
     ts = current_timestamps()
-    sheet.worksheet("Scrape_Log").append_row([
-        ts["last_updated_et"],
-        player["PlayerID"], player["Name"], player["School"], status, notes,
-    ])
+    try:
+        sheet.worksheet("Scrape_Log").append_row([
+            ts["last_updated_et"],
+            player["PlayerID"], player["Name"], player["School"], status, notes,
+        ])
+    except Exception as e:
+        print(f"    Warning: could not write Scrape_Log: {e}")
+
+# ── PER-STAT PROCESSING ───────────────────────────────────────────────────────
+STAT_JOBS = {
+    # stat_type: (current tab, history tab, columns)
+    "batting" : ("Batting",  "Batting_History",  BATTING_COLS),
+    "defense" : ("Defense",  "Defense_History",  DEFENSE_COLS),
+    "pitching": ("Pitching", "Pitching_History", PITCHING_COLS),
+}
+
+
+def stat_types_for(player):
+    return ["batting", "defense"] if player["Type"] == "Hitter" else ["pitching"]
+
+
+def process_stat(sheet, page, player, stat_type):
+    """Scrape one stat type and write it, or raise without writing anything."""
+    tab, hist, cols = STAT_JOBS[stat_type]
+    stats, note = scrape(page, player, stat_type)
+
+    ws = sheet.worksheet(tab)
+    row_number, old_row = read_current_row(ws, player["PlayerID"])
+
+    drops = stats_went_backwards(old_row, stats, stat_type)
+    if drops:
+        detail = ", ".join(f"{col} {old} -> {new}" for col, old, new in drops)
+        reason = f" ({note})" if note else ""
+        raise ScrapeError(
+            f"{stat_type} stats went down this season: {detail}{reason}. "
+            "Kept the existing row; check the jersey number and stats URL."
+        )
+
+    write_stats(ws, row_number, player, stats, cols)
+    write_history(sheet, hist, player, stats, cols, old_row)
+
+    if stat_type == "batting":
+        if (old_row is None or is_zero_row(old_row, BATTING_COLS)) and not is_zero_row(stats, BATTING_COLS):
+            push(
+                f"Player {player['Name']} has arrived!",
+                f"{player['School']} ({player['Division']})\n"
+                f"AVG: {stats.get('AVG','--')}  OPS: {stats.get('OPS','--')}  H: {stats.get('H','--')}",
+                priority=1,
+            )
+        check_thresholds(player, stats, old_row, "batting")
+    elif stat_type == "pitching":
+        if (old_row is None or is_zero_row(old_row, PITCHING_COLS)) and not is_zero_row(stats, PITCHING_COLS):
+            push(
+                f"Pitcher {player['Name']} has arrived!",
+                f"{player['School']} ({player['Division']})\n"
+                f"ERA: {stats.get('ERA','--')}  IP: {stats.get('IP','--')}  K: {stats.get('SO','--')}",
+                priority=1,
+            )
+        check_thresholds(player, stats, old_row, "pitching")
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 def main(test_player_id=None):
+    """Scrape every player. Returns True if the run failed overall."""
     print("Connecting to Google Sheets...")
     sheet   = connect()
     players = get_players(sheet)
@@ -650,8 +766,10 @@ def main(test_player_id=None):
         players = [p for p in players if p["PlayerID"] == test_player_id]
         if not players:
             print(f"Player ID '{test_player_id}' not found.")
-            return
+            return True
     print(f"Processing {len(players)} player(s)...\n")
+
+    ok_players, failed_players = [], []
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True)
@@ -663,47 +781,28 @@ def main(test_player_id=None):
 
         for player in players:
             print(f"-> {player['Name']} ({player['School']}) Jersey #{player.get('Jersey','')}")
-            try:
-                if player["Type"] == "Hitter":
-                    for st, tab, hist, cols in [
-                        ("batting", "Batting",  "Batting_History",  BATTING_COLS),
-                        ("defense", "Defense",  "Defense_History",  DEFENSE_COLS),
-                    ]:
-                        s       = scrape(page, player, st)
-                        old_row = write_stats(sheet, tab, player, s, cols)
-                        write_history(sheet, hist, player, s, cols, old_row)
-                        if st == "batting":
-                            if (old_row is None or is_zero_row(old_row, BATTING_COLS)) and not is_zero_row(s, BATTING_COLS):
-                                push(
-                                    f"Player {player['Name']} has arrived!",
-                                    f"{player['School']} ({player['Division']})\n"
-                                    f"AVG: {s.get('AVG','--')}  OPS: {s.get('OPS','--')}  H: {s.get('H','--')}",
-                                    priority=1,
-                                )
-                            check_thresholds(player, s, old_row, "batting")
-                else:
-                    s       = scrape(page, player, "pitching")
-                    old_row = write_stats(sheet, "Pitching", player, s, PITCHING_COLS)
-                    write_history(sheet, "Pitching_History", player, s, PITCHING_COLS, old_row)
-                    if (old_row is None or is_zero_row(old_row, PITCHING_COLS)) and not is_zero_row(s, PITCHING_COLS):
-                        push(
-                            f"Pitcher {player['Name']} has arrived!",
-                            f"{player['School']} ({player['Division']})\n"
-                            f"ERA: {s.get('ERA','--')}  IP: {s.get('IP','--')}  K: {s.get('SO','--')}",
-                            priority=1,
-                        )
-                    check_thresholds(player, s, old_row, "pitching")
+            errors = []
+            for stat_type in stat_types_for(player):
+                try:
+                    process_stat(sheet, page, player, stat_type)
+                except Exception as e:
+                    print(f"    ERROR ({stat_type}): {e}")
+                    errors.append(f"{stat_type}: {e}")
+            if errors:
+                log(sheet, player, "ERROR", " | ".join(errors))
+                failed_players.append(f"{player['Name']}: {' | '.join(errors)}")
+            else:
                 log(sheet, player, "SUCCESS")
-            except Exception as e:
-                print(f"    ERROR: {e}")
-                log(sheet, player, "ERROR", str(e))
+                ok_players.append(player["Name"])
 
         browser.close()
-    print("\nDone! Check your Google Sheet.")
+
+    return record_run(sheet, "Stats scraper", ok_players, failed_players)
 
 
 if __name__ == "__main__":
     test_player_id = os.environ.get("TEST_PLAYER_ID")
-    if not test_player_id and len(os.sys.argv) > 1:
-        test_player_id = os.sys.argv[1]
-    main(test_player_id=test_player_id)
+    if not test_player_id and len(sys.argv) > 1:
+        test_player_id = sys.argv[1]
+    if main(test_player_id=test_player_id):
+        sys.exit(1)
