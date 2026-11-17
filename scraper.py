@@ -625,16 +625,39 @@ def stats_changed(previous_row, mapped, target_cols):
     return False
 
 # ── SCRAPING ──────────────────────────────────────────────────────────────────
-def find_table(page, stat_type):
-    for table in page.query_selector_all("table"):
-        rows = table.query_selector_all("tr")
+# Every <table> on the page as a list of rows of cell text. The first row keeps
+# th and td cells (the header); later rows keep only td cells, so a player-name
+# <th> is dropped and align_headers() lines the headers back up.
+_TABLES_JS = """els => els.map(t => [...t.querySelectorAll('tr')].map((r, i) =>
+    [...r.querySelectorAll(i === 0 ? 'th, td' : 'td')].map(c => (c.innerText || '').trim())))"""
+
+
+def read_tables(page):
+    """Fetch-side: every table on the loaded page, for the parsers below."""
+    return page.eval_on_selector_all("table", _TABLES_JS)
+
+
+def find_table(tables, stat_type):
+    """Return (rows, upper-cased headers) of the first table for stat_type, or (None, [])."""
+    for rows in tables:
         if len(rows) < 2:
             continue
-        hdrs = [c.inner_text().strip().upper() for c in rows[0].query_selector_all("th, td")]
-        if stat_type == "batting"  and "AVG" in hdrs and "AB"  in hdrs: return table, hdrs
-        if stat_type == "pitching" and "ERA" in hdrs and "IP"  in hdrs: return table, hdrs
-        if stat_type == "defense"  and "FLD%" in hdrs and "PO" in hdrs: return table, hdrs
+        hdrs = [h.strip().upper() for h in rows[0]]
+        if stat_type == "batting"  and "AVG" in hdrs and "AB"  in hdrs: return rows, hdrs
+        if stat_type == "pitching" and "ERA" in hdrs and "IP"  in hdrs: return rows, hdrs
+        if stat_type == "defense"  and "FLD%" in hdrs and "PO" in hdrs: return rows, hdrs
     return None, []
+
+
+def player_from_table(rows, hdrs, jersey):
+    """Return the raw {header: cell} dict for jersey from a stats table, or None."""
+    for cells in rows[1:]:
+        if not cells:
+            continue
+        aligned = align_headers(hdrs, cells)
+        if cells[0].strip() == jersey:
+            return {aligned[i]: cells[i] for i in range(min(len(aligned), len(cells)))}
+    return None
 
 
 # Newer Sidearm stats pages show only one table at a time (chosen from a
@@ -723,9 +746,15 @@ def embedded_player_stats(page, stat_type, jersey):
     Returns the raw stats dict, {} if the stats list exists but the jersey isn't
     in it, or None if the page has no embedded stats for this stat type.
     """
+    if stat_type not in EMBEDDED_LISTS:
+        return None
+    return embedded_stats_from_payload(_embedded_payload(page), stat_type, jersey)
+
+
+def embedded_stats_from_payload(raw, stat_type, jersey):
+    """Parse-side of embedded_player_stats: same return values, from the payload array."""
     list_key = EMBEDDED_LISTS.get(stat_type)
-    raw = _embedded_payload(page) if list_key else None
-    if raw is None:
+    if raw is None or not list_key:
         return None
 
     def res(v):
@@ -794,7 +823,7 @@ def scrape(page, player, stat_type):
                 pass
 
     col_map = {"batting": BATTING_MAP, "pitching": PITCHING_MAP, "defense": DEFENSE_MAP}[stat_type]
-    table, hdrs = find_table(page, stat_type)
+    table, hdrs = find_table(read_tables(page), stat_type)
     if not table:
         embedded = embedded_player_stats(page, stat_type, jersey)
         if embedded is None:
@@ -806,16 +835,9 @@ def scrape(page, player, stat_type):
         print(f"    Note: {note} -- treating as no appearances yet")
         return zero_stats(col_map), note
 
-    hdrs = [h.upper() for h in hdrs]
-
-    for row in table.query_selector_all("tr")[1:]:
-        cells = [c.inner_text().strip() for c in row.query_selector_all("td")]
-        if not cells:
-            continue
-        aligned = align_headers(hdrs, cells)
-        if cells[0].strip() == jersey:
-            raw = {aligned[i]: cells[i] for i in range(min(len(aligned), len(cells)))}
-            return map_row(raw, col_map), ""
+    raw = player_from_table(table, hdrs, jersey)
+    if raw is not None:
+        return map_row(raw, col_map), ""
 
     note = f"Jersey #{jersey} not listed in the {stat_type} table"
     print(f"    Note: {note} -- treating as no appearances yet")
