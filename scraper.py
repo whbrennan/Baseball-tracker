@@ -211,6 +211,26 @@ def align_headers(hdrs, cells):
     return hdrs
 
 
+def innings_to_outs(value):
+    """Convert innings pitched as written ("45.2" = 45 and 2/3) to outs, or None."""
+    text = str(value if value is not None else "").strip()
+    if not text:
+        return None
+    whole, _, frac = text.partition(".")
+    try:
+        innings = int(whole or "0")
+        outs = int(frac[:1] or "0")
+    except ValueError:
+        return None
+    return innings * 3 + min(outs, 2)
+
+
+def innings_value(value):
+    """Innings pitched as a true number for rate stats ("45.2" -> 45.667)."""
+    outs = innings_to_outs(value)
+    return outs / 3 if outs is not None else 0.0
+
+
 def caught_stealing(sb, attempts):
     """CS from steals and attempts as strings; "" when either is missing."""
     try:
@@ -235,7 +255,7 @@ def map_row(raw, col_map):
 
     # ── Pitching computed ─────────────────────────────────────────────────────
     try:
-        ip  = float(out.get("IP",  0))
+        ip  = innings_value(out.get("IP", ""))
         bb  = float(out.get("BB",  0))
         so  = float(out.get("SO",  0))
         hbp = float(out.get("HBP", 0))
