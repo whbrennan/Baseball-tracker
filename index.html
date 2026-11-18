@@ -1144,8 +1144,8 @@ function renderLeaderboard() {
   const rows=data.filter(r=>(div==='ALL'||r.Division===div)&&parseFloat(r[stat])>0&&hasGames(r))
     .sort((a,b)=>asc?parseFloat(a[stat])-parseFloat(b[stat]):parseFloat(b[stat])-parseFloat(a[stat])).slice(0,10);
   if(!rows.length){el.innerHTML='<div class="status">No data yet.</div>';return;}
-  el.innerHTML=`<div class="lb-card"><div class="lb-title">${LABELS[stat]||stat} Leaders${div!=='ALL'?' — '+esc(div):''}</div>
-    ${rows.map((r,i)=>`<div class="lb-row" onclick="openProfile(${jsArg(r.PlayerID)},'${cat}')">
+  el.innerHTML=`<div class="lb-card"><div class="lb-title">${esc(LABELS[stat]||stat)} Leaders${div!=='ALL'?' — '+esc(div):''}</div>
+    ${rows.map((r,i)=>`<div class="lb-row" onclick="openProfile(${jsArg(r.PlayerID)},${jsArg(cat)})">
       <div class="lb-rank ${['rank-1','rank-2','rank-3'][i]||'rank-n'}">${i+1}</div>
       <div><div class="lb-name">${esc(r.Name)}</div>
       <div class="lb-school">${esc(r.School)} &nbsp;<span class="div-badge ${esc(r.Division)}">${esc(r.Division)}</span></div></div>
