@@ -2,8 +2,11 @@ name: Baseball Stats Scraper
 
 on:
   schedule:
-  # Every 2 hours, 12pm–12am EDT (Mon–Sun) = 4pm–4am UTC
-    - cron: '0 16,18,20,22,0,2 * * *'
+    # In season (February–June): every 2 hours, 12pm–10pm EDT = 4pm–2am UTC.
+    - cron: '0 16,18,20,22,0,2 * 2-6 *'
+    # Offseason: once a week (Monday 11:23am EDT), so the run log keeps
+    # showing the scraper works and late stat corrections are picked up.
+    - cron: '23 15 * 1,7-12 1'
   workflow_dispatch:  # allows manual trigger from GitHub anytime
 
 # One stats run at a time: a manual run waits for a scheduled one (and vice

@@ -1,0 +1,55 @@
+name: Maintenance
+
+# Monthly housekeeping so a quiet offseason doesn't break the scrapers.
+#
+# 1. GitHub turns off scheduled workflows in a public repository after 60 days
+#    without repository activity. Each month this re-enables the scheduled
+#    workflows (a no-op if they're on). If they were already switched off,
+#    this one is too: PRESEASON.md says how to check and turn them back on.
+# 2. In January it opens the preseason checklist as an issue, once.
+on:
+  schedule:
+    - cron: '17 13 3 * *'   # 3rd of each month, 9:17am EDT
+  workflow_dispatch:
+    inputs:
+      open_checklist:
+        description: "Open the preseason checklist issue now"
+        type: boolean
+        default: false
+
+permissions:
+  actions: write   # re-enable workflows
+  issues: write    # open the checklist issue
+  contents: read
+
+jobs:
+  housekeeping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Keep scheduled workflows enabled
+        run: |
+          for wf in scrape.yml scrape_schedule.yml maintenance.yml; do
+            gh workflow enable "$wf" && echo "enabled: $wf"
+          done
+
+      - name: Open the preseason checklist in January
+        if: github.event_name == 'schedule' || inputs.open_checklist
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$(date -u +%m)" != "01" ]; then
+            echo "Not January; nothing to open."; exit 0
+          fi
+          season=$(date -u +%Y)
+          [ "$(date -u +%m)" -ge 7 ] && season=$((season + 1))
+          title="Preseason checklist: $season season"
+          if gh issue list --state all --search "\"$title\" in:title" --json number --jq '.[0].number' | grep -q .; then
+            echo "Already opened: $title"; exit 0
+          fi
+          gh issue create --title "$title" --body-file PRESEASON.md

@@ -2,9 +2,12 @@ name: Scrape Schedules
 
 on:
   schedule:
-    # Runs every 3 hours during baseball season (adjust as needed)
-    # Cron format: minute hour day month weekday
-    - cron: '0 */3 * * *'
+    # In season (February–June): every 3 hours.
+    - cron: '0 */3 * 2-6 *'
+    # January, while schedules are being finalised: daily.
+    - cron: '41 14 * 1 *'
+    # Rest of the offseason: weekly (Monday), to pick up newly published schedules.
+    - cron: '41 14 * 7-12 1'
   workflow_dispatch:
     # Also allows manual trigger from GitHub Actions tab
 
