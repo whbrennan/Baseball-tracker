@@ -6,9 +6,11 @@ results to the Schedule sheet in the project Google Spreadsheet.
 The season comes from season.json (see season.py): each school's schedule_url
 contains {season}, and dates printed without a year get it from the season.
 
-Handles two page layouts:
+Handles two page layouts, detected automatically:
   - TABLE layout : standard Sidearm ?print=true pages (most schools)
   - JSON layout  : Nuxt/Vue embedded JSON blob (GW and similar)
+A school's "schedule_layout" in schools.json ("table" or "json") overrides
+detection.
 """
 
 import json
@@ -22,10 +24,12 @@ import gspread
 import requests
 from bs4 import BeautifulSoup
 from google.oauth2.service_account import Credentials
+from gspread.http_client import BackOffHTTPClient
 from gspread.utils import rowcol_to_a1
 
 from run_status import record_run
 from season import SEASON, season_for_date, season_url, year_for_month
+from sites import BROWSER_UA
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -38,13 +42,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
-    )
-}
+HEADERS = {"User-Agent": BROWSER_UA}
 
 SHEET_COLUMNS = [
     "SCHOOL", "DIVISION", "DATE", "TIME", "OPPONENT",
@@ -54,9 +52,6 @@ SHEET_COLUMNS = [
 # A separate home/away column, and what its values mean. Wins over "vs."/"at".
 HOME_AWAY_HEADERS = {"AT", "H/A", "HOME/AWAY", "HOME / AWAY"}
 HOME_AWAY_VALUES = {"HOME": "H", "H": "H", "AWAY": "A", "A": "A", "NEUTRAL": "N", "N": "N"}
-
-# Schools whose pages embed schedule data as a Nuxt JSON blob
-JSON_LAYOUT_SCHOOLS = {"George Washington"}
 
 # If a school's scrape returns fewer than this share of the games it had last
 # time (same season), assume the parse broke and keep the previous rows.
@@ -71,7 +66,8 @@ def get_sheet():
         sys.exit("ERROR: GOOGLE_CREDENTIALS environment variable not set.")
     creds_dict = json.loads(creds_json)
     creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
-    client = gspread.authorize(creds)
+    # BackOffHTTPClient retries quota (429), timeout and server errors with backoff.
+    client = gspread.authorize(creds, http_client=BackOffHTTPClient)
     spreadsheet = client.open_by_key(SPREADSHEET_ID)
     try:
         sheet = spreadsheet.worksheet(SHEET_NAME)
@@ -425,9 +421,13 @@ def scrape_school(school_cfg):
     if not soup:
         return []
 
-    if school in JSON_LAYOUT_SCHOOLS:
+    override = school_cfg.get("schedule_layout")
+    if override == "json":
         games  = parse_json_layout(soup, school, division, espn_team_id)
         layout = "json"
+    elif override == "table":
+        games  = parse_table_layout(soup, school, division, espn_team_id)
+        layout = "table"
     else:
         tables_with_data = [t for t in soup.find_all("table") if len(t.find_all("tr")) >= 2]
         if tables_with_data:

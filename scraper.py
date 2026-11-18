@@ -5,6 +5,7 @@ import json
 import time
 import requests
 import gspread
+from gspread.http_client import BackOffHTTPClient
 from gspread.utils import rowcol_to_a1
 from google.oauth2.service_account import Credentials
 from playwright.sync_api import sync_playwright
@@ -13,18 +14,13 @@ from zoneinfo import ZoneInfo
 
 from run_status import record_run
 from season import SEASON, season_url
+from sites import BROWSER_UA, load_schools, stats_layout, user_agent
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 SPREADSHEET_ID    = os.environ.get("SPREADSHEET_ID")
 GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDENTIALS")
 PUSHOVER_USER     = os.environ.get("PUSHOVER_USER_KEY")
 PUSHOVER_TOKEN    = os.environ.get("PUSHOVER_API_TOKEN")
-
-BROWSER_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/120.0.0.0 Safari/537.36"
-)
 
 UTC = ZoneInfo("UTC")
 EASTERN = ZoneInfo("America/New_York")
@@ -204,7 +200,8 @@ def connect():
         "https://www.googleapis.com/auth/drive",
     ]
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-    return gspread.authorize(creds).open_by_key(SPREADSHEET_ID)
+    # BackOffHTTPClient retries quota (429), timeout and server errors with backoff.
+    return gspread.authorize(creds, http_client=BackOffHTTPClient).open_by_key(SPREADSHEET_ID)
 
 
 def get_players(sheet):
@@ -351,7 +348,6 @@ def current_timestamps():
 
 BASE_FIELDS = ["Last_Updated", "PlayerID", "Name", "School", "Division"]
 HISTORY_PREFIX_FIELDS = ["Last_Updated", "Scraped_At_UTC", "Business_Date_ET", "PlayerID", "Name", "School", "Division"]
-KNOWN_DIVISIONS = {"D1", "D2", "D3", "NJCAA"}
 
 HEADER_ALIASES = {
     "lastupdated": "Last_Updated",
@@ -479,146 +475,6 @@ def build_history_payload(player, mapped, target_cols):
     return payload
 
 
-def history_row_needs_repair(row_map):
-    if not row_map:
-        return False
-    scraped_at = row_map.get("Scraped_At_UTC", "")
-    player_id = row_map.get("PlayerID", "")
-    business_date = row_map.get("Business_Date_ET", "")
-    return (
-        looks_like_player_id(scraped_at)
-        and not looks_like_datetime(scraped_at)
-        and not looks_like_player_id(player_id)
-        and not looks_like_date(business_date)
-    )
-
-
-def history_row_missing_metadata(row_map):
-    if not row_map:
-        return False
-    last_updated = row_map.get("Last_Updated", "")
-    player_id = row_map.get("PlayerID", "")
-    scraped_at = row_map.get("Scraped_At_UTC", "")
-    business_date = row_map.get("Business_Date_ET", "")
-    return (
-        looks_like_datetime(last_updated)
-        and looks_like_player_id(player_id)
-        and (not looks_like_datetime(scraped_at) or not looks_like_date(business_date))
-    )
-
-
-def history_row_missing_player_fields(row_map):
-    if not row_map:
-        return False
-    return (
-        looks_like_datetime(row_map.get("Scraped_At_UTC", ""))
-        and looks_like_date(row_map.get("Business_Date_ET", ""))
-        and not looks_like_player_id(row_map.get("PlayerID", ""))
-        and str(row_map.get("Name", "")).strip() in KNOWN_DIVISIONS
-    )
-
-
-def build_player_lookup(players, stat_type):
-    lookup = {}
-    for player in players:
-        player_type = str(player.get("Type", "")).strip()
-        matches_type = (
-            (stat_type == "pitching" and player_type == "Pitcher")
-            or (stat_type in ("batting", "defense") and player_type == "Hitter")
-        )
-        if not matches_type:
-            continue
-        key = (
-            normalize_school_name(player.get("School", "")),
-            str(player.get("Division", "")).strip(),
-        )
-        if key in lookup:
-            lookup[key] = None
-        else:
-            lookup[key] = player
-    return lookup
-
-
-def repair_history_table(sheet, tab, target_cols, players):
-    ws = sheet.worksheet(tab)
-    headers = get_headers(ws)
-    effective_headers = get_effective_headers(headers, target_cols, history=True)
-    print(f"    {tab} headers: {headers}")
-    print(f"    {tab} mapped headers: {effective_headers}")
-    legacy_headers = BASE_FIELDS + target_cols
-    all_values = ws.get_all_values()
-    all_records = ws.get_all_records()
-    stat_type = "pitching" if tab == "Pitching_History" else "defense" if tab == "Defense_History" else "batting"
-    player_lookup = build_player_lookup(players, stat_type)
-    repairs = []
-
-    for offset, raw_row in enumerate(all_values[1:]):
-        row_index = offset + 2
-        padded_row = raw_row + [""] * max(0, len(effective_headers) - len(raw_row))
-        row_map = {effective_headers[i]: padded_row[i] for i in range(len(effective_headers))}
-        record_map = {}
-        if offset < len(all_records):
-            record_map = {canonicalize_header(k): v for k, v in all_records[offset].items()}
-        needs_shift_repair = history_row_needs_repair(row_map)
-        needs_metadata_repair = history_row_missing_metadata(record_map)
-        needs_player_field_repair = history_row_missing_player_fields(record_map)
-        if not needs_shift_repair and not needs_metadata_repair and not needs_player_field_repair:
-            continue
-
-        if needs_shift_repair:
-            legacy_values = padded_row[:len(legacy_headers)]
-            source_map = {
-                legacy_headers[i]: legacy_values[i] if i < len(legacy_values) else ""
-                for i in range(len(legacy_headers))
-            }
-        elif needs_player_field_repair:
-            lookup_key = (
-                normalize_school_name(record_map.get("PlayerID", "")),
-                str(record_map.get("Name", "")).strip(),
-            )
-            player = player_lookup.get(lookup_key)
-            if not player:
-                continue
-            source_map = {
-                "Last_Updated": record_map.get("Last_Updated", ""),
-                "Scraped_At_UTC": record_map.get("Scraped_At_UTC", ""),
-                "Business_Date_ET": record_map.get("Business_Date_ET", ""),
-            }
-            source_map["PlayerID"] = player.get("PlayerID", "")
-            source_map["Name"] = player.get("Name", "")
-            source_map["School"] = raw_row[3] if len(raw_row) > 3 else player.get("School", "")
-            source_map["Division"] = raw_row[4] if len(raw_row) > 4 else player.get("Division", "")
-            stat_values = raw_row[5:]
-            for index, col in enumerate(target_cols):
-                source_map[col] = stat_values[index] if index < len(stat_values) else ""
-        else:
-            source_map = record_map
-
-        repaired_payload = {
-            "Last_Updated": source_map.get("Last_Updated", ""),
-            "Scraped_At_UTC": to_scraped_at_utc(source_map.get("Last_Updated", "")),
-            "Business_Date_ET": str(source_map.get("Last_Updated", "")).split(" ")[0],
-            "PlayerID": source_map.get("PlayerID", ""),
-            "Name": source_map.get("Name", ""),
-            "School": source_map.get("School", ""),
-            "Division": source_map.get("Division", ""),
-            "Season": source_map.get("Season", "") or str(row_season(source_map) or ""),
-        }
-        for col in target_cols:
-            repaired_payload[col] = source_map.get(col, "")
-
-        repaired_row = build_row(headers, repaired_payload, target_cols, history=True)
-        repairs.append({
-            "range": f"A{row_index}",
-            "values": [repaired_row],
-        })
-
-    if repairs:
-        ws.batch_update(repairs)
-        print(f"    OK: {tab} repaired {len(repairs)} misaligned row(s)")
-    return len(repairs)
-
-
 def stats_changed(previous_row, mapped, target_cols):
     """Return True when any tracked stat differs from the previous row."""
     if previous_row is None:
@@ -652,15 +508,23 @@ def read_tables(page):
     return page.eval_on_selector_all("table", _TABLES_JS)
 
 
+# Header cells that identify each stats table.
+REQUIRED_HEADERS = {
+    "batting" : ("AVG", "AB"),
+    "pitching": ("ERA", "IP"),
+    "defense" : ("FLD%", "PO"),
+}
+
+
 def find_table(tables, stat_type):
     """Return (rows, upper-cased headers) of the first table for stat_type, or (None, [])."""
+    need = REQUIRED_HEADERS[stat_type]
     for rows in tables:
         if len(rows) < 2:
             continue
         hdrs = [h.strip().upper() for h in rows[0]]
-        if stat_type == "batting"  and "AVG" in hdrs and "AB"  in hdrs: return rows, hdrs
-        if stat_type == "pitching" and "ERA" in hdrs and "IP"  in hdrs: return rows, hdrs
-        if stat_type == "defense"  and "FLD%" in hdrs and "PO" in hdrs: return rows, hdrs
+        if all(h in hdrs for h in need):
+            return rows, hdrs
     return None, []
 
 
@@ -686,39 +550,6 @@ EMBEDDED_LISTS = {
 
 
 _SCRIPT_RE = re.compile(r"<script[^>]*>(.*?)</script>", re.S | re.I)
-_HAS_PAYLOAD_JS = "() => [...document.scripts].some(s => (s.textContent || '').includes('ShallowReactive'))"
-
-
-def _embedded_payload(page):
-    """Return the page's Nuxt flat reference array, or None.
-
-    Reads the live DOM first. On some first loads the site's own scripts are
-    still rewriting the page and the data isn't visible there, so fall back to
-    the server's original HTML, which always contains it.
-    """
-    for attempt in range(2):
-        try:
-            page.wait_for_function(_HAS_PAYLOAD_JS, timeout=15000)
-        except Exception:
-            pass
-        payload = _parse_payload(
-            page.eval_on_selector_all("script", "els => els.map(e => e.textContent || '')"))
-        if payload is not None:
-            return payload
-        if attempt == 0:
-            print("    Note: embedded stats not on page yet -- reloading once")
-            try:
-                page.reload(wait_until="domcontentloaded", timeout=60000)
-            except Exception as e:
-                print(f"    Warning: reload failed: {e}")
-    try:
-        cookies = {c["name"]: c["value"] for c in page.context.cookies(page.url)}
-        resp = requests.get(page.url, headers={"User-Agent": BROWSER_UA}, cookies=cookies, timeout=30)
-        resp.raise_for_status()
-        return _parse_payload(_SCRIPT_RE.findall(resp.text))
-    except Exception as e:
-        print(f"    Warning: could not fetch raw page for embedded stats: {e}")
-        return None
 
 
 def _parse_payload(scripts):
@@ -755,19 +586,12 @@ def _embedded_raw(stat_type, rec):
     }
 
 
-def embedded_player_stats(page, stat_type, jersey):
-    """Read one player's overall season line from the page's embedded data.
+def embedded_stats_from_payload(raw, stat_type, jersey):
+    """One player's overall season line from the page's embedded data (the payload array).
 
     Returns the raw stats dict, {} if the stats list exists but the jersey isn't
     in it, or None if the page has no embedded stats for this stat type.
     """
-    if stat_type not in EMBEDDED_LISTS:
-        return None
-    return embedded_stats_from_payload(_embedded_payload(page), stat_type, jersey)
-
-
-def embedded_stats_from_payload(raw, stat_type, jersey):
-    """Parse-side of embedded_player_stats: same return values, from the payload array."""
     list_key = EMBEDDED_LISTS.get(stat_type)
     if raw is None or not list_key:
         return None
@@ -795,128 +619,196 @@ def embedded_stats_from_payload(raw, stat_type, jersey):
     return None
 
 
-def scrape(page, player, stat_type):
-    """Return (stats, note) for one stat type.
+def embedded_has_list(raw, stat_type):
+    """True if the payload has an embedded stats list for stat_type."""
+    return embedded_stats_from_payload(raw, stat_type, jersey=None) is not None
 
-    Raises ScrapeError when the page can't be read (no jersey configured, no
-    stats table found). A player missing from a table that loaded fine is
-    normal before their first appearance, so that returns zeros with a note;
-    main() refuses the zeros if the player already has stats this season.
+
+def player_stats(page_data, stat_type, jersey):
+    """Return (stats, note) for one player and stat type from a loaded stats page.
+
+    Raises ScrapeError when the player can't be read: no jersey configured, or
+    the page had neither a table nor embedded data for this stat type. A player
+    missing from data that loaded fine is normal before their first appearance,
+    so that returns zeros with a note; the caller refuses the zeros if the
+    player already has stats this season.
     """
-    jersey = str(player.get("Jersey", "")).strip()
+    jersey = str(jersey or "").strip()
     if not jersey:
         raise ScrapeError("No jersey number in the Players sheet")
-
-    url = season_url(player["Stats_URL"])
-    page.goto(url, wait_until="domcontentloaded", timeout=60000)
-    time.sleep(5)
-
-    # ── Tab navigation for SIDEARM sites ─────────────────────────────────────
-    # Known dropdown-layout sites: try the dropdown first. Any other site (or a
-    # failed click) falls back to the page's embedded data below.
-    if stat_type == "pitching":
-        if "gwsports.com" in player["Stats_URL"]:
-            try:
-                trigger = page.locator("button.s-select-box", has_text="Batting").first
-                trigger.click(timeout=5000)
-                time.sleep(1)
-                pitch_option = page.locator("li.s-select__option-item", has_text="Pitching").first
-                pitch_option.click(timeout=5000)
-                time.sleep(3)
-            except Exception as e:
-                print(f"    Warning: Pitching tab click failed: {e}")
-
-    if stat_type == "defense":
-        if "gwsports.com" in player["Stats_URL"] or "ecupirates.com" in player["Stats_URL"]:
-            try:
-                trigger = page.locator("button.s-select-box", has_text="Batting").first
-                trigger.click(timeout=5000)
-                time.sleep(1)
-                fielding = page.locator("li.s-select__option-item", has_text="Fielding").first
-                fielding.click(timeout=5000)
-                time.sleep(2)
-            except Exception:
-                pass
-
     col_map = {"batting": BATTING_MAP, "pitching": PITCHING_MAP, "defense": DEFENSE_MAP}[stat_type]
-    table, hdrs = find_table(read_tables(page), stat_type)
-    if not table:
-        embedded = embedded_player_stats(page, stat_type, jersey)
+
+    table, hdrs = page_data.tables.get(stat_type) or (None, [])
+    if table:
+        raw = player_from_table(table, hdrs, jersey)
+        if raw is not None:
+            return map_row(raw, col_map), ""
+        note = f"Jersey #{jersey} not listed in the {stat_type} table"
+    else:
+        embedded = embedded_stats_from_payload(page_data.payload, stat_type, jersey)
         if embedded is None:
-            raise ScrapeError(f"No {stat_type} table or embedded stats found at {url}")
+            raise ScrapeError(f"No {stat_type} table or embedded stats found at {page_data.url}")
         if embedded:
-            print(f"    Note: {stat_type} read from the page's embedded data")
             return map_row(embedded, col_map), ""
         note = f"Jersey #{jersey} not listed in the {stat_type} stats"
-        print(f"    Note: {note} -- treating as no appearances yet")
-        return zero_stats(col_map), note
-
-    raw = player_from_table(table, hdrs, jersey)
-    if raw is not None:
-        return map_row(raw, col_map), ""
-
-    note = f"Jersey #{jersey} not listed in the {stat_type} table"
     print(f"    Note: {note} -- treating as no appearances yet")
     return zero_stats(col_map), note
 
-# ── SHEET WRITING ─────────────────────────────────────────────────────────────
-def read_current_row(ws, pid):
-    """Return (sheet_row_number, record) for a player's current row, or (None, None)."""
-    for i, r in enumerate(ws.get_all_records()):
-        record = {canonicalize_header(k): v for k, v in r.items()}
-        if record.get("PlayerID") == pid:
-            return i + 2, record
-    return None, None
+
+# ── LOADING A STATS PAGE ──────────────────────────────────────────────────────
+class StatsPage:
+    """What one stats URL gave: the table found for each stat type, and the embedded data."""
+
+    def __init__(self, url, tables=None, payload=None):
+        self.url = url
+        self.tables = tables or {}   # stat_type -> (rows, hdrs) or (None, [])
+        self.payload = payload       # Nuxt payload array, or None
+
+    def has(self, stat_type):
+        return bool((self.tables.get(stat_type) or (None,))[0]) or \
+            embedded_has_list(self.payload, stat_type)
+
+    def missing(self, stat_types):
+        return [st for st in stat_types if not self.has(st)]
 
 
-def write_stats(ws, row_number, player, mapped, target_cols):
-    """Overwrite the player's current stats row, or append one if new."""
-    headers = get_headers(ws)
-    row = build_row(headers, build_current_payload(player, mapped, target_cols), target_cols, history=False)
-    if row_number:
-        ws.update(values=[row], range_name=f"A{row_number}")
-        print(f"    OK: {ws.title} updated")
-    else:
-        ws.append_row(row)
-        print(f"    OK: {ws.title} added")
+# Resolves when the page shows a table for every stat type needed (or, when
+# allowed, has its embedded data), so a fast page isn't held up and a slow one
+# gets time to finish.
+_READY_JS = """({need, payloadOk}) => {
+  const heads = [...document.querySelectorAll('table')].map(t => {
+    const first = t.querySelector('tr');
+    return first ? [...first.querySelectorAll('th, td')].map(c => (c.innerText || '').trim().toUpperCase()) : [];
+  });
+  if (need.every(group => heads.some(h => group.every(x => h.includes(x))))) return true;
+  return payloadOk && [...document.scripts].some(s => (s.textContent || '').includes('ShallowReactive'));
+}"""
+READY_TIMEOUT_MS = 20000
+LOAD_ATTEMPTS = 3
+RETRY_DELAYS = (5, 15)  # seconds before the 2nd and 3rd attempts
+
+# Options in the Sidearm stats dropdown (button.s-select-box) for each stat type.
+DROPDOWN_OPTIONS = {"pitching": "Pitching", "defense": "Fielding"}
+_DROPDOWN_BOX = re.compile(r"\b(Batting|Pitching|Fielding)\b")
 
 
-def write_history(sheet, tab, player, mapped, target_cols, previous_row=None):
-    ws  = sheet.worksheet(tab)
-    if not stats_changed(previous_row, mapped, target_cols):
-        print(f"    OK: {tab} unchanged -- snapshot skipped")
-        return False
-    headers = get_headers(ws)
-    row = build_row(headers, build_history_payload(player, mapped, target_cols), target_cols, history=True)
-    ws.append_row(row)
-    print(f"    OK: {tab} snapshot saved")
-    return True
-
-
-def log(sheet, player, status, notes=""):
-    """Append to Scrape_Log. Best-effort: a logging failure mustn't stop the run."""
-    ts = current_timestamps()
+def _wait_for(page, groups, timeout, payload_ok=True):
     try:
-        sheet.worksheet("Scrape_Log").append_row([
-            ts["last_updated_et"],
-            player["PlayerID"], player["Name"], player["School"], status, notes,
-        ])
+        page.wait_for_function(_READY_JS, arg={"need": [list(g) for g in groups], "payloadOk": payload_ok},
+                               timeout=timeout)
+        return True
+    except Exception:
+        return False
+
+
+def _dropdown_tables(page, stat_type):
+    """Pick stat_type in the page's Batting/Pitching/Fielding dropdown and re-read the tables.
+
+    Returns the tables, or None if the page has no such dropdown or the table
+    didn't appear.
+    """
+    option = DROPDOWN_OPTIONS.get(stat_type)
+    if not option:
+        return None
+    box = page.locator("button.s-select-box", has_text=_DROPDOWN_BOX).first
+    try:
+        if not box.count():
+            return None
+        box.click(timeout=5000)
+        page.locator("li.s-select__option-item", has_text=option).first.click(timeout=5000)
     except Exception as e:
-        print(f"    Warning: could not write Scrape_Log: {e}")
+        print(f"    Note: {option} dropdown choice failed: {e}")
+        return None
+    if not _wait_for(page, [REQUIRED_HEADERS[stat_type]], timeout=10000, payload_ok=False):
+        print(f"    Note: no {stat_type} table after choosing {option}")
+        return None
+    return read_tables(page)
+
+
+def _raw_html_payload(page):
+    """The embedded data from the server's original HTML, for pages whose own
+    scripts have already rewritten it out of the live DOM."""
+    try:
+        cookies = {c["name"]: c["value"] for c in page.context.cookies(page.url)}
+        resp = requests.get(page.url, headers={"User-Agent": BROWSER_UA}, cookies=cookies, timeout=30)
+        resp.raise_for_status()
+        return _parse_payload(_SCRIPT_RE.findall(resp.text))
+    except Exception as e:
+        print(f"    Note: could not fetch raw page for embedded stats: {e}")
+        return None
+
+
+def _load_once(page, url, stat_types, layout=None):
+    page.goto(url, wait_until="domcontentloaded", timeout=60000)
+    _wait_for(page, [REQUIRED_HEADERS[st] for st in stat_types], READY_TIMEOUT_MS)
+    tables = read_tables(page)
+    payload = _parse_payload(page.eval_on_selector_all("script", "els => els.map(e => e.textContent || '')"))
+    found = {st: find_table(tables, st) for st in stat_types}
+
+    # Not on the page as a table: use the embedded data, else the dropdown.
+    # A "dropdown" override tries the dropdown first; "embedded" never clicks.
+    for st in stat_types:
+        if found[st][0]:
+            continue
+        if layout != "dropdown" and embedded_has_list(payload, st):
+            continue
+        if layout != "embedded":
+            chosen = _dropdown_tables(page, st)
+            if chosen:
+                found[st] = find_table(chosen, st)
+                if found[st][0]:
+                    print(f"    Note: {st} table read via the site's dropdown")
+    data = StatsPage(url, found, payload)
+    if payload is None and data.missing(stat_types):
+        data.payload = _raw_html_payload(page)
+    for st in stat_types:
+        if not found[st][0] and embedded_has_list(data.payload, st):
+            print(f"    Note: {st} read from the page's embedded data")
+    return data
+
+
+def load_stats_page(page, url, stat_types, layout=None):
+    """Load a stats URL and collect what each stat type needs, retrying slow or broken loads.
+
+    Always returns a StatsPage once a load succeeds; stat types it still lacks
+    after the last attempt make player_stats() raise for those players. Raises
+    ScrapeError only if the page never loaded at all.
+    """
+    data, error = None, None
+    for attempt in range(LOAD_ATTEMPTS):
+        if attempt:
+            delay = RETRY_DELAYS[min(attempt - 1, len(RETRY_DELAYS) - 1)]
+            print(f"    Retrying in {delay}s (attempt {attempt + 1} of {LOAD_ATTEMPTS})")
+            time.sleep(delay)
+        try:
+            data = _load_once(page, url, stat_types, layout)
+        except Exception as e:
+            error = e
+            print(f"    Load failed: {str(e).splitlines()[0]}")
+            continue
+        missing = data.missing(stat_types)
+        if not missing:
+            return data
+        print(f"    No {', '.join(missing)} data found yet")
+    if data is None:
+        raise ScrapeError(f"Could not load {url}: {str(error).splitlines()[0] if error else 'unknown error'}")
+    return data
 
 SEASON_HEADER = "Season"
 
 
-def ensure_season_column(ws):
+def ensure_season_column(ws, values=None):
     """Add a Season column after the last named header, filling existing rows.
 
     Existing rows get the year they were written (see row_season). Runs once
-    per tab; afterwards the header is there and this only reads row 1.
+    per tab; afterwards the header is there and nothing is written. Pass the
+    tab's values if already read, to save a read.
     """
-    headers = get_headers(ws)
+    headers = [h.strip() for h in values[0]] if values else get_headers(ws)
     if SEASON_HEADER in headers:
         return False
-    values = ws.get_all_values()
+    if values is None:
+        values = ws.get_all_values()
     named = [i for i, h in enumerate(headers) if h]
     col = (named[-1] + 2) if named else 1
     if col > ws.col_count:
@@ -929,6 +821,68 @@ def ensure_season_column(ws):
     ws.update(values=column, range_name=rowcol_to_a1(1, col), value_input_option="RAW")
     print(f"    OK: {ws.title} -- added {SEASON_HEADER} column, filled {len(column) - 1} rows")
     return True
+
+
+# ── SHEET TABS: read once, write in one batch ─────────────────────────────────
+class CurrentTab:
+    """A current-stats tab (one row per player), read once per run.
+
+    Rows are changed in memory and sent with one batch_update (existing
+    players) and one append_rows (new players) by flush().
+    """
+
+    def __init__(self, ws, target_cols):
+        self.ws, self.cols = ws, target_cols
+        values = ws.get_all_values()
+        if ensure_season_column(ws, values):
+            values = ws.get_all_values()
+        self.headers = [h.strip() for h in values[0]] if values else []
+        canon = [canonicalize_header(h) for h in self.headers]
+        self.rows = {}
+        for number, raw in enumerate(values[1:], start=2):
+            record = {canon[i]: raw[i] for i in range(min(len(canon), len(raw))) if canon[i]}
+            pid = str(record.get("PlayerID", "")).strip()
+            if pid and pid not in self.rows:
+                self.rows[pid] = (number, record)
+        self.updates, self.appends = {}, []
+
+    def current(self, pid):
+        """(sheet row number, record) for a player's row, or (None, None)."""
+        return self.rows.get(pid, (None, None))
+
+    def set(self, player, mapped):
+        row = build_row(self.headers, build_current_payload(player, mapped, self.cols), self.cols)
+        number, _ = self.current(player["PlayerID"])
+        if number:
+            self.updates[number] = row
+        else:
+            self.appends.append(row)
+
+    def flush(self):
+        if self.updates:
+            self.ws.batch_update([{"range": f"A{n}", "values": [row]} for n, row in sorted(self.updates.items())])
+        if self.appends:
+            self.ws.append_rows(self.appends)
+        print(f"    {self.ws.title}: {len(self.updates)} updated, {len(self.appends)} added")
+
+
+class HistoryTab:
+    """A history tab: only its header row is read; snapshots are appended in one call."""
+
+    def __init__(self, ws, target_cols):
+        self.ws, self.cols = ws, target_cols
+        ensure_season_column(ws)
+        self.headers = get_headers(ws)
+        self.appends = []
+
+    def add(self, player, mapped):
+        self.appends.append(build_row(self.headers, build_history_payload(player, mapped, self.cols),
+                                      self.cols, history=True))
+
+    def flush(self):
+        if self.appends:
+            self.ws.append_rows(self.appends)
+        print(f"    {self.ws.title}: {len(self.appends)} snapshots added")
 
 
 # ── PER-STAT PROCESSING ───────────────────────────────────────────────────────
@@ -944,26 +898,8 @@ def stat_types_for(player):
     return ["batting", "defense"] if player["Type"] == "Hitter" else ["pitching"]
 
 
-def process_stat(sheet, page, player, stat_type):
-    """Scrape one stat type and write it, or raise without writing anything."""
-    tab, hist, cols = STAT_JOBS[stat_type]
-    stats, note = scrape(page, player, stat_type)
-
-    ws = sheet.worksheet(tab)
-    row_number, old_row = read_current_row(ws, player["PlayerID"])
-
-    drops = stats_went_backwards(old_row, stats, stat_type)
-    if drops:
-        detail = ", ".join(f"{col} {old} -> {new}" for col, old, new in drops)
-        reason = f" ({note})" if note else ""
-        raise ScrapeError(
-            f"{stat_type} stats went down this season: {detail}{reason}. "
-            "Kept the existing row; check the jersey number and stats URL."
-        )
-
-    write_stats(ws, row_number, player, stats, cols)
-    write_history(sheet, hist, player, stats, cols, old_row)
-
+def notify(player, stat_type, stats, old_row):
+    """Pushover alerts for a first appearance or a newly crossed threshold."""
     if stat_type == "batting":
         if (old_row is None or is_zero_row(old_row, BATTING_COLS)) and not is_zero_row(stats, BATTING_COLS):
             push(
@@ -983,21 +919,111 @@ def process_stat(sheet, page, player, stat_type):
             )
         check_thresholds(player, stats, old_row, "pitching")
 
+
+def process_stat(tabs, page_data, player, stat_type):
+    """Read one stat type for a player and queue its writes, or raise without queueing."""
+    current, history = tabs[stat_type]
+    stats, note = player_stats(page_data, stat_type, player.get("Jersey", ""))
+    _, old_row = current.current(player["PlayerID"])
+
+    drops = stats_went_backwards(old_row, stats, stat_type)
+    if drops:
+        detail = ", ".join(f"{col} {old} -> {new}" for col, old, new in drops)
+        reason = f" ({note})" if note else ""
+        raise ScrapeError(
+            f"{stat_type} stats went down this season: {detail}{reason}. "
+            "Kept the existing row; check the jersey number and stats URL."
+        )
+
+    current.set(player, stats)
+    if stats_changed(old_row, stats, current.cols):
+        history.add(player, stats)
+        print(f"    {stat_type}: updated, snapshot queued")
+    else:
+        print(f"    {stat_type}: updated, unchanged since last snapshot")
+    notify(player, stat_type, stats, old_row)
+
+
+def open_tabs(sheet, stat_types):
+    """{stat_type: (CurrentTab, HistoryTab)} for the stat types this run needs."""
+    tabs = {}
+    for st in stat_types:
+        tab, hist, cols = STAT_JOBS[st]
+        tabs[st] = (CurrentTab(sheet.worksheet(tab), cols), HistoryTab(sheet.worksheet(hist), cols))
+    return tabs
+
+
+def group_by_page(players):
+    """{stats URL for the season: [players]}, in Players-tab order, so each page loads once."""
+    groups = {}
+    for player in players:
+        groups.setdefault(season_url(player.get("Stats_URL", "")), []).append(player)
+    return groups
+
+
+def scrape_players(sheet, page, players, schools=None):
+    """Scrape every player and write the results. Returns (ok_names, failed_items)."""
+    schools = load_schools() if schools is None else schools
+    needed = [st for st in STAT_JOBS if any(st in stat_types_for(p) for p in players)]
+    tabs = open_tabs(sheet, needed)
+    errors = {p["PlayerID"]: [] for p in players}
+    log_rows = []
+
+    for url, group in group_by_page(players).items():
+        stat_types = [st for st in STAT_JOBS if any(st in stat_types_for(p) for p in group)]
+        names = ", ".join(p["Name"] for p in group)
+        print(f"-> {url}  ({names})")
+        try:
+            page_data = load_stats_page(page, url, stat_types, stats_layout(url, schools))
+            load_error = None
+        except ScrapeError as e:
+            page_data, load_error = None, e
+        for player in group:
+            print(f"  {player['Name']} ({player['School']}) Jersey #{player.get('Jersey', '')}")
+            for st in stat_types_for(player):
+                try:
+                    if load_error:
+                        raise load_error
+                    process_stat(tabs, page_data, player, st)
+                except Exception as e:
+                    print(f"    ERROR ({st}): {e}")
+                    errors[player["PlayerID"]].append(f"{st}: {e}")
+
+    # Write everything. A tab that can't be written fails the players it held.
+    print("\nWriting to the sheet...")
+    for st, pair in tabs.items():
+        for tab in pair:
+            try:
+                tab.flush()
+            except Exception as e:
+                print(f"    ERROR writing {tab.ws.title}: {e}")
+                for p in players:
+                    if st in stat_types_for(p) and not errors[p["PlayerID"]]:
+                        errors[p["PlayerID"]].append(f"{st}: could not write {tab.ws.title}: {e}")
+
+    ok, failed = [], []
+    ts = current_timestamps()["last_updated_et"]
+    for p in players:
+        problems = errors[p["PlayerID"]]
+        status, notes = ("ERROR", " | ".join(problems)) if problems else ("SUCCESS", "")
+        log_rows.append([ts, p["PlayerID"], p["Name"], p["School"], status, notes])
+        if problems:
+            failed.append(f"{p['Name']}: {' | '.join(problems)}")
+        else:
+            ok.append(p["Name"])
+    try:
+        sheet.worksheet("Scrape_Log").append_rows(log_rows)
+    except Exception as e:  # logging must not fail the run
+        print(f"    Warning: could not write Scrape_Log: {e}")
+    return ok, failed
+
+
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 def main(test_player_id=None):
     """Scrape every player. Returns True if the run failed overall."""
     print(f"Season {SEASON}. Connecting to Google Sheets...")
     sheet   = connect()
     players = get_players(sheet)
-    repair_history_table(sheet, "Batting_History", BATTING_COLS, players)
-    repair_history_table(sheet, "Pitching_History", PITCHING_COLS, players)
-    repair_history_table(sheet, "Defense_History", DEFENSE_COLS, players)
-    for tab, hist, _ in STAT_JOBS.values():
-        for name in (tab, hist):
-            try:
-                ensure_season_column(sheet.worksheet(name))
-            except Exception as e:  # never stop a scrape over this
-                print(f"    Warning: could not add {SEASON_HEADER} column to {name}: {e}")
     if test_player_id:
         players = [p for p in players if p["PlayerID"] == test_player_id]
         if not players:
@@ -1005,29 +1031,11 @@ def main(test_player_id=None):
             return True
     print(f"Processing {len(players)} player(s)...\n")
 
-    ok_players, failed_players = [], []
-
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True)
-        context = browser.new_context(user_agent=BROWSER_UA)
+        context = browser.new_context(user_agent=user_agent(browser.version))
         page = context.new_page()
-
-        for player in players:
-            print(f"-> {player['Name']} ({player['School']}) Jersey #{player.get('Jersey','')}")
-            errors = []
-            for stat_type in stat_types_for(player):
-                try:
-                    process_stat(sheet, page, player, stat_type)
-                except Exception as e:
-                    print(f"    ERROR ({stat_type}): {e}")
-                    errors.append(f"{stat_type}: {e}")
-            if errors:
-                log(sheet, player, "ERROR", " | ".join(errors))
-                failed_players.append(f"{player['Name']}: {' | '.join(errors)}")
-            else:
-                log(sheet, player, "SUCCESS")
-                ok_players.append(player["Name"])
-
+        ok_players, failed_players = scrape_players(sheet, page, players)
         browser.close()
 
     return record_run(sheet, "Stats scraper", ok_players, failed_players)
