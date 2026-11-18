@@ -4,7 +4,11 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>College Baseball Tracker 2026</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<!-- Chart.js 4.4.1 exactly as published to npm; the browser refuses it if the bytes
+     differ from this hash (checked against npm's published checksum). -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js"
+        integrity="sha384-dug+JxfBvklEQdJ4AYuBBAIScUz0bVN73xpy273gcAwHjb3qI0fXmuYNaNfdyYJG"
+        crossorigin="anonymous"></script>
 <style>
 :root{--green:#1a7a3c;--dkg:#135c2d;--gold:#f0b429;--dark:#0f1923;--card:#162230;--border:#1e3448;--text:#e8edf2;--muted:#7a8fa6;--up:#34d399;--down:#f87171;--hot:rgba(240,180,41,.10);}
 *{box-sizing:border-box;margin:0;padding:0;}
@@ -410,7 +414,10 @@ td:first-child,td:nth-child(2),td:nth-child(3){text-align:left;}
 const DEBUG_MODE = new URLSearchParams(location.search).has('debug');
 let debugCount = 0;
 function dbg(msg, level='info') {
-  console[level==='error'?'error':level==='warn'?'warn':'log'](`[${level.toUpperCase()}] ${msg.replace(/<[^>]+>/g,'')}`);
+  // Plain text for the console: let the browser's parser drop the markup
+  // (DOMParser never runs scripts) rather than stripping tags with a regex.
+  const plain = new DOMParser().parseFromString(msg, 'text/html').body.textContent;
+  console[level==='error'?'error':level==='warn'?'warn':'log'](`[${level.toUpperCase()}] ${plain}`);
   if (!DEBUG_MODE) return;
   debugCount++;
   const panel = document.getElementById('debug-panel');
