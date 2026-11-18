@@ -19,6 +19,8 @@ concurrency:
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    env:
+      PYTHONUNBUFFERED: '1'  # show the log as it runs, not all at the end
     # A normal run takes about 6 minutes; stop a hung browser or site long
     # before GitHub's 6-hour default.
     timeout-minutes: 20

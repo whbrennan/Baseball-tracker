@@ -7,6 +7,8 @@ Cells are stored as strings, like a sheet written with RAW input.
 get_all_records() converts numbers the way gspread does by default.
 """
 
+from collections import Counter
+
 import gspread
 from gspread.utils import a1_to_rowcol, numericise_all
 
@@ -15,6 +17,7 @@ class FakeWorksheet:
     def __init__(self, title, rows=None, spreadsheet=None, row_count=1000, col_count=26):
         self.title = title
         self.spreadsheet = spreadsheet
+        self.calls = Counter()  # API-calling methods used, to check batching
         self._rows = [[str(c) for c in r] for r in (rows or [])]
         self.row_count = max(row_count, len(self._rows))
         self.col_count = max([col_count] + [len(r) for r in self._rows])
@@ -28,9 +31,11 @@ class FakeWorksheet:
         return [r + [""] * (width - len(r)) for r in rows]
 
     def get_all_values(self):
+        self.calls['get_all_values'] += 1
         return self._trimmed()
 
     def row_values(self, row):
+        self.calls['row_values'] += 1
         values = self._rows[row - 1] if row <= len(self._rows) else []
         values = list(values)
         while values and values[-1] == "":
@@ -38,6 +43,7 @@ class FakeWorksheet:
         return values
 
     def get_all_records(self):
+        self.calls['get_all_records'] += 1
         values = self._trimmed()
         if not values:
             return []
@@ -56,6 +62,10 @@ class FakeWorksheet:
         self.col_count = max(self.col_count, col)
 
     def update(self, values=None, range_name=None, value_input_option=None, **_):
+        self.calls["update"] += 1
+        self._write(values, range_name)
+
+    def _write(self, values, range_name):
         start = (range_name or "A1").split(":")[0]
         row0, col0 = a1_to_rowcol(start)
         for r, line in enumerate(values):
@@ -63,10 +73,20 @@ class FakeWorksheet:
                 self._set(row0 + r, col0 + c, value)
 
     def batch_update(self, data, **_):
+        self.calls["batch_update"] += 1
         for item in data:
-            self.update(values=item["values"], range_name=item["range"])
+            self._write(item["values"], item["range"])
 
     def append_row(self, values, **_):
+        self.calls["append_row"] += 1
+        self._append(values)
+
+    def append_rows(self, values, **_):
+        self.calls["append_rows"] += 1
+        for row in values:
+            self._append(row)
+
+    def _append(self, values):
         last = len(self._trimmed())
         for c, value in enumerate(values):
             self._set(last + 1, c + 1, value)

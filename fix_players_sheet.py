@@ -20,6 +20,7 @@ import os
 import sys
 
 import gspread
+from gspread.http_client import BackOffHTTPClient
 from google.oauth2.service_account import Credentials
 
 PLAYERS_TAB = "Players"
@@ -89,7 +90,8 @@ def connect():
         json.loads(os.environ["GOOGLE_CREDENTIALS"]),
         scopes=["https://www.googleapis.com/auth/spreadsheets"],
     )
-    return gspread.authorize(creds).open_by_key(os.environ["SPREADSHEET_ID"])
+    # BackOffHTTPClient retries quota (429), timeout and server errors with backoff.
+    return gspread.authorize(creds, http_client=BackOffHTTPClient).open_by_key(os.environ["SPREADSHEET_ID"])
 
 
 def main(apply=False, sheet=None):

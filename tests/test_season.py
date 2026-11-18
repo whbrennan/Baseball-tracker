@@ -114,7 +114,42 @@ def test_check_targets_build_every_url_for_the_season():
     ("https://a.com/sports/baseball/schedule", 200, "Baseball Schedule", "NOT PUBLISHED"),
     ("https://a.com/sports/baseball/stats/2027", 200, "Baseball Cumulative Statistics", "WRONG SEASON"),
     ("https://a.com/sports/baseball/stats/2027", 403, "", "ERROR"),
+    ("https://b.com/sports/baseball/stats/2027", 200, "2027 Baseball Statistics", "MOVED"),
     ("https://a.com/sports/baseball/stats/2027", None, "", "ERROR"),
 ])
 def test_check_classify(final, status, title, verdict):
     assert C.classify(2027, "https://a.com/sports/baseball/stats/2027", final, status, title)[0] == verdict
+
+
+def test_check_moved_is_a_warning_not_a_failure(monkeypatch):
+    results = [("stats: A", "u", "OK", ""), ("stats: B", "u", "MOVED", "now at x")]
+    monkeypatch.setattr(C, "load_players", lambda _: [])
+    monkeypatch.setattr(C, "check", lambda season, items: results)
+    assert C.main(["--season", "2026"]) == 0
+    monkeypatch.setattr(C, "check", lambda season, items: results + [("stats: C", "u", "ERROR", "HTTP 500")])
+    assert C.main(["--season", "2026"]) == 1
+
+
+def test_check_retries_a_page_that_errored(monkeypatch):
+    calls = []
+    answers = iter([("ERROR", "HTTP 500"), ("OK", "2026 Baseball")])
+    monkeypatch.setattr(C, "_check_page", lambda page, season, url: calls.append(url) or next(answers))
+    monkeypatch.setattr(C.time, "sleep", lambda s: None)
+
+    class FakePW:
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        class chromium:
+            @staticmethod
+            def launch(**k):
+                class B:
+                    def new_context(self, **k):
+                        class Ctx:
+                            def new_page(self): return None
+                        return Ctx()
+                    def close(self): pass
+                return B()
+    import playwright.sync_api
+    monkeypatch.setattr(playwright.sync_api, "sync_playwright", lambda: FakePW())
+    results = C.check(2026, [("stats: B", "https://b.example/stats/2026")])
+    assert len(calls) == 2 and results[0][2] == "OK" and "after a retry: HTTP 500" in results[0][3]
