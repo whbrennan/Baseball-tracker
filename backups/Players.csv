@@ -1,0 +1,24 @@
+PlayerID,Name,School,Division,Type,Jersey,Stats_URL
+P001,Tyler Fetterman,East Tennessee State University,D1,Hitter,24,https://etsubucs.com/sports/baseball/stats/2026
+P002,David Mendez,University of Maryland,D1,Hitter,9,https://umterps.com/sports/baseball/stats/2026
+P003,Kyle Ausgotharp,Shippensburg University,D2,Hitter,16,https://shipraiders.com/sports/baseball/stats/2026
+P004,Colin Scherer,Monmouth University,D1,Pitcher,44,https://monmouthhawks.com/sports/baseball/stats/2026
+P005,Benjamin Ross,Penn State Harrisburg,D3,Pitcher,18,https://psuharrisburgsports.com/sports/baseball/stats/2026
+P006,Brendan Moenke,Iona University,D1,Pitcher,55,https://ionagaels.com/sports/baseball/stats/2026
+P007,Chase Triplett,Roanoke College,D3,Pitcher,25,https://roanokemaroons.com/sports/baseball/stats/2026
+P008,Brady Yates,University of Mary Washington,D3,Hitter,44,https://umweagles.com/sports/baseball/stats/2026
+P009,Kase Cochran,University of Lynchburg,D3,Hitter,38,https://lynchburgsports.com/sports/baseball/stats/2026
+P010,Luke Baker,Christopher Newport University,D3,Pitcher,30,https://www.cnusports.com/sports/baseball/stats/2026
+P011,Matthew Roussey,Christopher Newport University,D3,Pitcher,44,https://www.cnusports.com/sports/baseball/stats/2026
+P012,Chad Yates,William & Mary,D1,Pitcher,16,https://tribeathletics.com/sports/baseball/stats/2026
+P013,Carter Schuster,Wingate University,D2,Pitcher,30,https://wingatebulldogs.com/sports/baseball/stats/2026
+P014,Chase Obstgarten,Bridgewater College,D3,Pitcher,37,https://bridgewatereagles.com/sports/baseball/stats/2026
+P015,Sean Tracey,Virginia Wesleyan University,D3,Pitcher,46,https://vwuathletics.com/sports/baseball/stats/2026
+P016,Jack McDonald,Harford Community College,NJCAA,Pitcher,9,https://harfordathletics.com/sports/baseball/stats/2026
+P017,Liam Thyen,George Washington University,D1,Pitcher,25,https://gwsports.com/sports/baseball/stats/2026
+P018,Zach Brennan,Tufts University,D3,Pitcher,36,https://gotuftsjumbos.com/sports/baseball/stats/2026
+P019,Grady Lenahan,East Carolina University,D1,Hitter,12,https://ecupirates.com/sports/baseball/stats/2026
+P020,Shane Howie,Marymount University,D3,Hitter,37,https://marymountsaints.com/sports/baseball/stats
+P021,Brett Triplett,Marymount University,D3,Pitcher,44,https://marymountsaints.com/sports/baseball/stats
+P022,Luke Sullivan,Radford University,D1,Hitter,24,https://radfordathletics.com/sports/baseball/stats/2026?path=baseball
+P023,Maddox Webb,Harding,D2,Pitcher,39,https://hardingsports.com/sports/baseball/stats?path=base
