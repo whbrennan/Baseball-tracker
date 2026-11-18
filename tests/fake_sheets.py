@@ -123,6 +123,9 @@ class FakeSpreadsheet:
         except KeyError:
             raise gspread.WorksheetNotFound(title) from None
 
+    def worksheets(self):
+        return list(self._tabs.values())
+
     def add_worksheet(self, title, rows=1000, cols=26, **_):
         ws = FakeWorksheet(title, spreadsheet=self, row_count=rows, col_count=cols)
         self._tabs[title] = ws
