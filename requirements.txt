@@ -4,5 +4,5 @@
 beautifulsoup4==4.15.0
 google-auth==2.62.2
 gspread==6.2.1
-playwright==1.63.0
+playwright==1.65.2
 requests==2.34.2
