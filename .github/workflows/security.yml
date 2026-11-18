@@ -1,0 +1,132 @@
+name: Security
+
+# Continuous security monitoring. All free for a public repository.
+#
+# - CodeQL scans the Python, the dashboard's JavaScript and these workflow
+#   files for vulnerabilities (results: Security tab > Code scanning, and a
+#   check on every pull request).
+#   This is CodeQL's "advanced setup". GitHub's default setup must be off
+#   (Settings > Code security > CodeQL analysis > Switch to advanced), or
+#   GitHub rejects these results. Default setup here only scanned the
+#   workflow files; it can't see JavaScript inside index.html.
+# - pip-audit checks the pinned Python packages against known
+#   vulnerabilities; a vulnerable package fails the check.
+# - Weekly (and on demand) the findings are summarised in one issue labelled
+#   "security-monitor": opened or updated when there is something to fix,
+#   closed when everything is clear. GitHub notifies the repo owner.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '37 14 * * 1'   # Mondays, 10:37am EDT
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write   # upload results to code scanning
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript, actions]
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Initialise CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-extended
+
+      - name: Analyse
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:${{ matrix.language }}
+
+  dependencies:
+    name: Python dependencies (pip-audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Audit pinned packages
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements-dev.txt --desc
+
+  report:
+    name: Weekly security report
+    if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    needs: [codeql, dependencies]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write            # open, update or close the report issue
+      security-events: read    # read code scanning alerts
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Collect findings
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements-dev.txt --format json --output audit.json || true
+          gh api "repos/$GH_REPO/code-scanning/alerts?state=open&per_page=100" > alerts.json 2>/dev/null \
+            || echo '[]' > alerts.json
+          python security_report.py audit.json alerts.json > report.md
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open, update or close the report issue
+        run: |
+          title="Security monitoring: open findings"
+          gh label create security-monitor --color B60205 \
+            --description "Opened by the Security workflow" --force
+          number=$(gh issue list --label security-monitor --state open --json number --jq '.[0].number // empty')
+          if grep -q '^FINDINGS: 0$' report.md; then
+            if [ -n "$number" ]; then
+              gh issue comment "$number" --body "All clear as of $(date -u +%Y-%m-%d): no open findings."
+              gh issue close "$number"
+            fi
+            echo "No open findings."
+          elif [ -n "$number" ]; then
+            gh issue edit "$number" --body-file report.md
+          else
+            gh issue create --title "$title" --label security-monitor --body-file report.md
+          fi
