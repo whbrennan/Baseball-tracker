@@ -11,6 +11,10 @@ on:
         type: boolean
         default: false
 
+# Least privilege: this workflow's token can only read the repository.
+permissions:
+  contents: read
+
 # Never alongside a stats scrape: both write the history tabs.
 concurrency:
   group: sheet-stats
