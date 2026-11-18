@@ -5,12 +5,14 @@ import json
 import time
 import requests
 import gspread
+from gspread.utils import rowcol_to_a1
 from google.oauth2.service_account import Credentials
 from playwright.sync_api import sync_playwright
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from run_status import record_run
+from season import SEASON, season_url
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 SPREADSHEET_ID    = os.environ.get("SPREADSHEET_ID")
@@ -95,14 +97,25 @@ def _to_number(value):
         return None
 
 
-def same_season(previous_row):
-    """True if the existing sheet row was written during the current season.
+def row_season(row):
+    """Season of a stats row: its Season cell, else the year it was written.
 
-    College seasons run Feb-June, so the calendar year of Last_Updated
-    identifies the season. Across a season rollover stats legitimately reset.
+    Rows written before the Season column existed are all from the season of
+    their calendar year (stats pages are only scraped for the season they show).
     """
-    last_updated = str((previous_row or {}).get("Last_Updated", "")).strip()
-    return last_updated[:4] == str(datetime.now(EASTERN).year)
+    value = str((row or {}).get("Season", "")).strip()
+    if value[:4].isdigit():
+        return int(value[:4])
+    last_updated = str((row or {}).get("Last_Updated", "")).strip()
+    return int(last_updated[:4]) if last_updated[:4].isdigit() else None
+
+
+def same_season(previous_row):
+    """True if the existing sheet row is from the configured season.
+
+    Across a season rollover stats legitimately reset to zero.
+    """
+    return row_season(previous_row) == SEASON
 
 
 def stats_went_backwards(previous_row, mapped, stat_type):
@@ -451,6 +464,7 @@ def build_current_payload(player, mapped, target_cols):
         "Name": player["Name"],
         "School": player["School"],
         "Division": player["Division"],
+        "Season": str(SEASON),
     }
     for col in target_cols:
         payload[col] = str(mapped.get(col, ""))
@@ -588,6 +602,7 @@ def repair_history_table(sheet, tab, target_cols, players):
             "Name": source_map.get("Name", ""),
             "School": source_map.get("School", ""),
             "Division": source_map.get("Division", ""),
+            "Season": source_map.get("Season", "") or str(row_season(source_map) or ""),
         }
         for col in target_cols:
             repaired_payload[col] = source_map.get(col, "")
@@ -792,7 +807,8 @@ def scrape(page, player, stat_type):
     if not jersey:
         raise ScrapeError("No jersey number in the Players sheet")
 
-    page.goto(player["Stats_URL"], wait_until="domcontentloaded", timeout=60000)
+    url = season_url(player["Stats_URL"])
+    page.goto(url, wait_until="domcontentloaded", timeout=60000)
     time.sleep(5)
 
     # ── Tab navigation for SIDEARM sites ─────────────────────────────────────
@@ -827,7 +843,7 @@ def scrape(page, player, stat_type):
     if not table:
         embedded = embedded_player_stats(page, stat_type, jersey)
         if embedded is None:
-            raise ScrapeError(f"No {stat_type} table or embedded stats found at {player['Stats_URL']}")
+            raise ScrapeError(f"No {stat_type} table or embedded stats found at {url}")
         if embedded:
             print(f"    Note: {stat_type} read from the page's embedded data")
             return map_row(embedded, col_map), ""
@@ -888,6 +904,33 @@ def log(sheet, player, status, notes=""):
     except Exception as e:
         print(f"    Warning: could not write Scrape_Log: {e}")
 
+SEASON_HEADER = "Season"
+
+
+def ensure_season_column(ws):
+    """Add a Season column after the last named header, filling existing rows.
+
+    Existing rows get the year they were written (see row_season). Runs once
+    per tab; afterwards the header is there and this only reads row 1.
+    """
+    headers = get_headers(ws)
+    if SEASON_HEADER in headers:
+        return False
+    values = ws.get_all_values()
+    named = [i for i, h in enumerate(headers) if h]
+    col = (named[-1] + 2) if named else 1
+    if col > ws.col_count:
+        ws.add_cols(col - ws.col_count)
+    canon = [canonicalize_header(h) for h in (values[0] if values else [])]
+    column = [[SEASON_HEADER]]
+    for row in values[1:]:
+        record = {canon[i]: row[i] for i in range(min(len(canon), len(row))) if canon[i]}
+        column.append([str(row_season(record) or "")])
+    ws.update(values=column, range_name=rowcol_to_a1(1, col), value_input_option="RAW")
+    print(f"    OK: {ws.title} -- added {SEASON_HEADER} column, filled {len(column) - 1} rows")
+    return True
+
+
 # ── PER-STAT PROCESSING ───────────────────────────────────────────────────────
 STAT_JOBS = {
     # stat_type: (current tab, history tab, columns)
@@ -943,12 +986,18 @@ def process_stat(sheet, page, player, stat_type):
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 def main(test_player_id=None):
     """Scrape every player. Returns True if the run failed overall."""
-    print("Connecting to Google Sheets...")
+    print(f"Season {SEASON}. Connecting to Google Sheets...")
     sheet   = connect()
     players = get_players(sheet)
     repair_history_table(sheet, "Batting_History", BATTING_COLS, players)
     repair_history_table(sheet, "Pitching_History", PITCHING_COLS, players)
     repair_history_table(sheet, "Defense_History", DEFENSE_COLS, players)
+    for tab, hist, _ in STAT_JOBS.values():
+        for name in (tab, hist):
+            try:
+                ensure_season_column(sheet.worksheet(name))
+            except Exception as e:  # never stop a scrape over this
+                print(f"    Warning: could not add {SEASON_HEADER} column to {name}: {e}")
     if test_player_id:
         players = [p for p in players if p["PlayerID"] == test_player_id]
         if not players:

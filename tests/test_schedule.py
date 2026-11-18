@@ -7,7 +7,7 @@ import scrape_schedule as SS
 from conftest import ROOT, load_fixture
 from fake_sheets import FakeWorksheet, records
 
-YEAR = SS.CURRENT_YEAR
+SEASON = SS.SEASON
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -18,7 +18,7 @@ YEAR = SS.CURRENT_YEAR
     ("February 13, 2026", "2026-02-13"),
     ("2/13/2026", "2026-02-13"),
     ("2026-02-13", "2026-02-13"),
-    ("Feb 13", f"{YEAR}-02-13"),  # no year: current calendar year (see #21)
+    ("Feb 13", f"{SEASON}-02-13"),  # no year: from the season (#21)
     ("TBA", None),
     ("", None),
 ])
@@ -59,6 +59,32 @@ def test_normalise_result(raw, expected):
 ])
 def test_normalise_time(raw, expected):
     assert SS.normalise_time(raw) == expected
+
+
+@pytest.mark.parametrize("raw, season, expected", [
+    # Scraping the 2027 schedule in November 2026: spring dates are 2027.
+    ("Feb 14", 2027, "2027-02-14"),
+    ("Jan 3", 2027, "2027-01-03"),
+    # Fall ball before the 2027 season is autumn 2026.
+    ("Oct 12", 2027, "2026-10-12"),
+    ("Dec 31", 2027, "2026-12-31"),
+    ("9/20", 2027, "2026-09-20"),
+    # A year on the page always wins.
+    ("Feb 14, 2026", 2027, "2026-02-14"),
+    # Leap day only exists in leap seasons.
+    ("Feb 29", 2028, "2028-02-29"),
+    ("Feb 29", 2027, None),
+])
+def test_parse_date_around_new_year(raw, season, expected):
+    assert SS.parse_date(raw, season=season) == expected
+
+
+@pytest.mark.parametrize("date, season", [
+    ("2026-02-13", 2026), ("2026-06-20", 2026), ("2026-09-01", 2027),
+    ("2026-12-31", 2027), ("2027-01-01", 2027),
+])
+def test_game_season(date, season):
+    assert SS.game_season(date) == season
 
 
 def test_extract_time():
@@ -115,8 +141,18 @@ def test_scrape_school_picks_layout(monkeypatch):
     games = SS.scrape_school({"school": "East Tennessee State", "division": "D1",
                               "schedule_url": "https://etsubucs.com/sports/baseball/schedule/2026",
                               "espn_team_id": "304"})
-    assert seen == ["https://etsubucs.com/sports/baseball/schedule/2026?print=true"]
+    assert seen == [f"https://etsubucs.com/sports/baseball/schedule/{SEASON}?print=true"]
     assert len(games) == 53
+    assert {g["SEASON"] for g in games} == {"2026"}
+
+
+def test_scrape_school_drops_games_from_another_season(monkeypatch):
+    soup = BeautifulSoup(load_fixture("etsu_schedule"), "html.parser")
+    monkeypatch.setattr(SS, "fetch_soup", lambda url: soup)
+    monkeypatch.setattr(SS, "SEASON", 2027)
+    games = SS.scrape_school({"school": "East Tennessee State",
+                              "schedule_url": "https://etsubucs.com/sports/baseball/schedule/{season}"})
+    assert games == []
 
 
 # ── merge with previous rows, and the sheet write ─────────────────────────────
@@ -134,18 +170,36 @@ def test_merge_keeps_previous_rows_when_school_scrape_empty():
     assert "B" in kept and "A" not in kept
 
 
-def test_merge_keeps_previous_rows_when_far_fewer_games_same_season():
+def test_merge_keeps_previous_rows_when_far_fewer_games():
     previous = [game("A", f"2026-03-{d:02d}") for d in range(1, 21)]
     new = {"A": [game("A", "2026-03-01")] * 4}
-    merged, kept = SS.merge_with_previous(["A"], new, previous)
+    merged, kept = SS.merge_with_previous(["A"], new, previous, season=2026)
     assert len(merged) == 20 and "A" in kept
 
 
-def test_merge_accepts_short_schedule_in_a_new_season():
+def test_merge_never_keeps_last_seasons_rows():
     previous = [game("A", f"2026-03-{d:02d}") for d in range(1, 21)]
+    # New season, school's page not up yet: no rows, rather than last spring's.
+    merged, kept = SS.merge_with_previous(["A"], {"A": []}, previous, season=2027)
+    assert merged == [] and not kept
+    # New season, a short early schedule: taken as is.
     new = {"A": [game("A", "2027-02-14")] * 4}
-    merged, kept = SS.merge_with_previous(["A"], new, previous)
+    merged, kept = SS.merge_with_previous(["A"], new, previous, season=2027)
     assert len(merged) == 4 and not kept
+
+
+def test_merge_previous_rows_without_season_column_use_their_date():
+    previous = [game("A", "2026-03-01")]
+    del previous[0]["SEASON"]
+    merged, kept = SS.merge_with_previous(["A"], {}, previous, season=2026)
+    assert merged[0]["SEASON"] == "2026" and "A" in kept
+
+
+def test_merge_refreshes_division_and_espn_id_on_kept_rows():
+    stale = dict(game("GW", "2026-03-01"), DIVISION="D2", ESPN_TEAM_ID="45")
+    config = {"GW": {"school": "GW", "division": "D1", "espn_team_id": "2638"}}
+    merged, _ = SS.merge_with_previous(["GW"], {}, [stale], config, season=2026)
+    assert (merged[0]["DIVISION"], merged[0]["ESPN_TEAM_ID"]) == ("D1", "2638")
 
 
 def test_merge_drops_schools_no_longer_configured():
