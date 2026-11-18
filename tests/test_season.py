@@ -128,3 +128,28 @@ def test_check_moved_is_a_warning_not_a_failure(monkeypatch):
     assert C.main(["--season", "2026"]) == 0
     monkeypatch.setattr(C, "check", lambda season, items: results + [("stats: C", "u", "ERROR", "HTTP 500")])
     assert C.main(["--season", "2026"]) == 1
+
+
+def test_check_retries_a_page_that_errored(monkeypatch):
+    calls = []
+    answers = iter([("ERROR", "HTTP 500"), ("OK", "2026 Baseball")])
+    monkeypatch.setattr(C, "_check_page", lambda page, season, url: calls.append(url) or next(answers))
+    monkeypatch.setattr(C.time, "sleep", lambda s: None)
+
+    class FakePW:
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        class chromium:
+            @staticmethod
+            def launch(**k):
+                class B:
+                    def new_context(self, **k):
+                        class Ctx:
+                            def new_page(self): return None
+                        return Ctx()
+                    def close(self): pass
+                return B()
+    import playwright.sync_api
+    monkeypatch.setattr(playwright.sync_api, "sync_playwright", lambda: FakePW())
+    results = C.check(2026, [("stats: B", "https://b.example/stats/2026")])
+    assert len(calls) == 2 and results[0][2] == "OK" and "after a retry: HTTP 500" in results[0][3]

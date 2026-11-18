@@ -29,6 +29,7 @@ import io
 import json
 import os
 import sys
+import time
 
 from urllib.parse import urlparse
 
@@ -86,6 +87,18 @@ def classify(season, requested_url, final_url, status, title_text):
     return "OK", title_text.strip()[:80]
 
 
+def _check_page(page, season, url):
+    try:
+        resp = page.goto(url, wait_until="domcontentloaded", timeout=45000)
+        heading = page.eval_on_selector_all("h1, h2", "els => els.slice(0, 3).map(e => e.innerText).join(' ')")
+        return classify(season, url, page.url, resp.status if resp else None, f"{page.title()} {heading}")
+    except Exception as e:
+        return ("ERROR", str(e).splitlines()[0][:80])
+
+
+RETRY_DELAY = 10  # seconds before re-checking a page that errored (sites have brief 500s)
+
+
 def check(season, items):
     from playwright.sync_api import sync_playwright
     results = []
@@ -93,13 +106,13 @@ def check(season, items):
         browser = pw.chromium.launch(headless=True)
         page = browser.new_context(user_agent=UA).new_page()
         for label, url in items:
-            try:
-                resp = page.goto(url, wait_until="domcontentloaded", timeout=45000)
-                heading = page.eval_on_selector_all("h1, h2", "els => els.slice(0, 3).map(e => e.innerText).join(' ')")
-                verdict = classify(season, url, page.url, resp.status if resp else None,
-                                   f"{page.title()} {heading}")
-            except Exception as e:
-                verdict = ("ERROR", str(e).splitlines()[0][:80])
+            verdict = _check_page(page, season, url)
+            if verdict[0] == "ERROR":
+                time.sleep(RETRY_DELAY)
+                first = verdict[1]
+                verdict = _check_page(page, season, url)
+                if verdict[0] == "OK":
+                    verdict = ("OK", f"{verdict[1]} (after a retry: {first})")
             results.append((label, url) + verdict)
             print(f"{verdict[0]:<13} {label:<45} {url}  {verdict[1]}", flush=True)
         browser.close()
