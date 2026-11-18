@@ -81,6 +81,9 @@ class FakeWorksheet:
                 for c in range(c1, min(c2, len(line)) + 1):
                     line[c - 1] = ""
 
+    def delete_rows(self, start_index, end_index=None):
+        del self._rows[start_index - 1:(end_index or start_index)]
+
     def add_rows(self, n):
         self.row_count += n
 
