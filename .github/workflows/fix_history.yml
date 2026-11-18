@@ -29,6 +29,8 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false  # don't leave the token in .git/config
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -42,7 +44,8 @@ jobs:
 
       - name: Fix history
         env:
+          APPLY: ${{ inputs.apply }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
           GITHUB_TOKEN: ${{ github.token }}
-        run: python fix_history.py ${{ inputs.apply && '--apply' || '' }}
+        run: python fix_history.py $([ "$APPLY" = true ] && echo --apply)

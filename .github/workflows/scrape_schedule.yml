@@ -11,6 +11,10 @@ on:
   workflow_dispatch:
     # Also allows manual trigger from GitHub Actions tab
 
+# Least privilege: this workflow's token can only read the repository.
+permissions:
+  contents: read
+
 # The schedule scraper rewrites the whole Schedule tab, so two runs must never
 # overlap. A second run waits for the first.
 concurrency:
@@ -27,6 +31,8 @@ jobs:
     steps:
       - name: Check out repo
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false  # don't leave the token in .git/config
 
       - name: Set up Python
         uses: actions/setup-python@v5

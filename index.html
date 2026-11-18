@@ -497,6 +497,13 @@ const SCHOOL_PLAYERS = {
   'Marymount':                 ['Shane Howie', 'Brett Triplett'],
 };
 
+// ── ESCAPING ───────────────────────────────────────────────────────────────────
+// Sheet values come partly from school websites and ESPN, so every value put
+// into HTML is escaped. jsArg() is for a value inside an inline onclick="...".
+const esc = v => String(v ?? '').replace(/[&<>"']/g,
+  ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
+const jsArg = v => esc(JSON.stringify(String(v ?? '')));
+
 // ── SEASON ─────────────────────────────────────────────────────────────────────
 // The season comes from the data: the newest Season on the current-stats tabs
 // (rows written before the Season column existed count as the year they were
@@ -552,7 +559,7 @@ async function fetchSheet(name) {
   dbg(`Fetching sheet: <b>${name}</b>`, 'info');
   let r;
   try { r = await fetch(url); }
-  catch(e) { dbg(`Network error on <b>${name}</b>: ${e.message}`, 'error'); throw e; }
+  catch(e) { dbg(`Network error on <b>${name}</b>: ${esc(e.message)}`, 'error'); throw e; }
   if (!r.ok) { dbg(`HTTP ${r.status} on <b>${name}</b>`, 'error'); throw new Error(`HTTP ${r.status}: ${name}`); }
   const text = await r.text();
   const rows = parseCsv(text);
@@ -575,7 +582,7 @@ async function init() {
       [batHistory, pitHistory] = (await Promise.all([
         fetchSheet('Batting_History'), fetchSheet('Pitching_History')
       ])).map(inSeason);
-    } catch(e) { dbg(`History tabs not found (optional): ${e.message}`, 'warn'); }
+    } catch(e) { dbg(`History tabs not found (optional): ${esc(e.message)}`, 'warn'); }
     const ts = [...batData,...pitData].map(r=>r.Last_Updated).filter(Boolean).sort().pop();
     document.getElementById('last-updated').textContent = ts ? `Last updated: ${ts}` : 'Stats loaded';
     renderBatting(); renderPitching(); renderDefense();
@@ -587,9 +594,9 @@ async function init() {
     loadTodayGames();
     dbg('✅ All render functions complete.', 'info');
   } catch(e) {
-    dbg(`FATAL init error: ${e.message}`, 'error');
+    dbg(`FATAL init error: ${esc(e.message)}`, 'error');
     document.querySelectorAll('.status').forEach(el => {
-      el.innerHTML = `⚠️ Could not load stats.<br><small>${e.message}</small>`;
+      el.innerHTML = `⚠️ Could not load stats.<br><small>${esc(e.message)}</small>`;
     });
   }
 }
@@ -627,7 +634,7 @@ async function loadTodayGames(manual = false) {
       'Updated ' + new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
   } catch(e) {
     document.getElementById('today-games-container').innerHTML =
-      `<div class="status" style="color:var(--down)">Error loading games: ${e.message}</div>`;
+      `<div class="status" style="color:var(--down)">Error loading games: ${esc(e.message)}</div>`;
   }
 }
 
@@ -698,39 +705,39 @@ function renderTodayGames(games, espnScores) {
     const haBadge  = g.homeAway === 'H' ? '<span class="badge-home">HOME</span>'
                    : g.homeAway === 'N' ? '<span class="badge-away">NEUTRAL</span>'
                    : '<span class="badge-away">AWAY</span>';
-    const tvBadge  = g.tv ? `<span class="badge-tv">${g.tv}</span>` : '';
-    const divBadge = `<span class="badge-div">${g.division}</span>`;
+    const tvBadge  = g.tv ? `<span class="badge-tv">${esc(g.tv)}</span>` : '';
+    const divBadge = `<span class="badge-div">${esc(g.division)}</span>`;
     let scoreBlock = '';
     const live = g.espnTeamId ? espnScores[g.espnTeamId] : null;
     if (live) {
       const isLive  = live.state === 'in';
       const isFinal = live.state === 'post';
       const statusTxt = isLive
-        ? `🔴 LIVE${live.period ? ' · Inn ' + live.period : ''}${live.clock ? ' · ' + live.clock : ''}`
+        ? `🔴 LIVE${live.period ? ' · Inn ' + esc(live.period) : ''}${live.clock ? ' · ' + esc(live.clock) : ''}`
         : isFinal ? 'Final' : live.status;
       const statusCls = isLive ? 'status-live' : 'status-final';
       scoreBlock = `
         <div class="game-score">
-          <span class="game-score-val">${live.teamScore} – ${live.oppScore}</span>
-          <span class="game-score-status ${statusCls}">${statusTxt}</span>
+          <span class="game-score-val">${esc(live.teamScore)} – ${esc(live.oppScore)}</span>
+          <span class="game-score-status ${statusCls}">${esc(statusTxt)}</span>
         </div>`;
     } else if (g.result) {
       const wl  = g.result.startsWith('W') ? 'status-win' : g.result.startsWith('L') ? 'status-loss' : 'status-final';
       scoreBlock = `
         <div class="game-score">
-          <span class="game-score-val">${g.result}</span>
+          <span class="game-score-val">${esc(g.result)}</span>
           <span class="game-score-status ${wl}">Final</span>
         </div>`;
     }
     const playerLine = players.length
-      ? `<div class="game-players">👤 ${players.join(' · ')}</div>`
+      ? `<div class="game-players">👤 ${players.map(esc).join(' · ')}</div>`
       : '';
     return `
       <div class="game-card">
         <div class="game-card-top">
           <div>
-            <div class="game-matchup">${g.school} ${ha} ${g.opponent}</div>
-            <div class="game-meta">${[g.location, g.time].filter(Boolean).join(' · ')}</div>
+            <div class="game-matchup">${esc(g.school)} ${ha} ${esc(g.opponent)}</div>
+            <div class="game-meta">${[g.location, g.time].filter(Boolean).map(esc).join(' · ')}</div>
           </div>
           <div class="game-badges">${haBadge}${divBadge}${tvBadge}</div>
         </div>
@@ -782,7 +789,7 @@ async function loadTodayPerformances() {
     todayPitHist = ph.filter(r => shouldShowPerformanceRow(r, today, latestCompletedGameDates));
     todayDefHist = dh.filter(r => shouldShowPerformanceRow(r, today, latestCompletedGameDates));
   } catch(e) {
-    dbg(`Performances load error: ${e.message}`, 'warn');
+    dbg(`Performances load error: ${esc(e.message)}`, 'warn');
   }
 
   renderPerfTable(todayPitHist, ph, PERF_PIT_COLS, 'perf-pit-head', 'perf-pit-body', 'perf-pit-status', 'perf-pit-table', 'pitching', latestCompletedGameDates);
@@ -891,13 +898,13 @@ function renderPerfTable(todayRows, allHistory, cols, headId, bodyId, statusId, 
     const hotRow = cols.some(c => isHot(c, delta[c], type));
     const cells  = cols.map(c => {
       const hot = isHot(c, delta[c], type);
-      return `<td class="${hot ? 'hot-val' : ''}">${formatStatDisplay(delta[c], c, type)}</td>`;
+      return `<td class="${hot ? 'hot-val' : ''}">${esc(formatStatDisplay(delta[c], c, type))}</td>`;
     }).join('');
     return `<tr class="${hotRow ? 'hot-row' : ''}">
-      <td><span class="player-link" onclick="openProfile('${row.PlayerID}','${type}')">${row.Name || ''}</span></td>
-      <td style="font-size:.78rem;color:var(--muted)">${shortSchool(row.School)}</td>
-      <td><span class="div-badge ${row.Division || ''}">${row.Division || ''}</span></td>
-      <td class="perf-note">${getPerformanceNote(row, perfDate, today)}</td>
+      <td><span class="player-link" onclick="openProfile(${jsArg(row.PlayerID)},'${type}')">${esc(row.Name)}</span></td>
+      <td style="font-size:.78rem;color:var(--muted)">${esc(shortSchool(row.School))}</td>
+      <td><span class="div-badge ${esc(row.Division)}">${esc(row.Division)}</span></td>
+      <td class="perf-note">${esc(getPerformanceNote(row, perfDate, today))}</td>
       ${cells}
     </tr>`;
   }).join('');
@@ -1038,12 +1045,12 @@ function buildTable(rows, cols, sortState, headId, bodyId, statusId, tableId, so
       const prev=history.length?getPrev(history,r.PlayerID):null;
       const streak=history.length?getStreak(history,r.PlayerID,type):0;
       const hotRow=cols.some(c=>isHot(c,r[c],type));
-      const cells=cols.map(c=>`<td class="${isHot(c,r[c],type)?'hot-val':''}">${formatStatDisplay(r[c], c, type)}${trendArrow(c,r[c],prev)}</td>`).join('');
+      const cells=cols.map(c=>`<td class="${isHot(c,r[c],type)?'hot-val':''}">${esc(formatStatDisplay(r[c], c, type))}${trendArrow(c,r[c],prev)}</td>`).join('');
       const fire=streak>=3?'🔥':'';
       return `<tr class="${hotRow?'hot-row':''}">
-        <td><span class="player-link" onclick="openProfile('${r.PlayerID}','${type}')">${r.Name||''}${fire}</span></td>
-        <td style="font-size:.78rem;color:var(--muted)">${shortSchool(r.School)}</td>
-        <td><span class="div-badge ${r.Division||''}">${r.Division||''}</span></td>
+        <td><span class="player-link" onclick="openProfile(${jsArg(r.PlayerID)},'${type}')">${esc(r.Name)}${fire}</span></td>
+        <td style="font-size:.78rem;color:var(--muted)">${esc(shortSchool(r.School))}</td>
+        <td><span class="div-badge ${esc(r.Division)}">${esc(r.Division)}</span></td>
         ${cells}</tr>`;
     }).join('');
 }
@@ -1083,12 +1090,12 @@ function renderInactiveContent(players) {
       ${hasNum?'<th>#</th>':''}<th>Name</th>${hasPos?'<th>Pos</th>':''}<th>Type</th><th>School</th><th>Div</th>
     </tr></thead><tbody>
       ${sorted.map(r=>`<tr>
-        ${hasNum?`<td class="dim">${r[numKey]||'—'}</td>`:''}
-        <td style="font-weight:600;color:#fed7aa">${r.Name||'—'}</td>
-        ${hasPos?`<td class="dim">${r[posKey]||'—'}</td>`:''}
+        ${hasNum?`<td class="dim">${esc(r[numKey]||'—')}</td>`:''}
+        <td style="font-weight:600;color:#fed7aa">${esc(r.Name||'—')}</td>
+        ${hasPos?`<td class="dim">${esc(r[posKey]||'—')}</td>`:''}
         <td><span style="font-size:.65rem;font-weight:700;padding:1px 6px;border-radius:3px;background:#3a1a0a;color:#f97316">${r._rosterType}</span></td>
-        <td class="dim">${shortSchool(r.School)}</td>
-        <td><span class="div-badge ${r.Division||''}">${r.Division||''}</span></td>
+        <td class="dim">${esc(shortSchool(r.School))}</td>
+        <td><span class="div-badge ${esc(r.Division)}">${esc(r.Division)}</span></td>
       </tr>`).join('')}
     </tbody></table></div>`;
   } else {
@@ -1099,11 +1106,11 @@ function renderInactiveContent(players) {
       const num=r[numKey]||r['#']||r.Jersey||null, pos=r[posKey]||r.Pos||null;
       return `<div class="inactive-card">
         <span class="ic-type">${r._rosterType}</span>
-        <div class="ic-name">${r.Name||'—'}</div>
+        <div class="ic-name">${esc(r.Name||'—')}</div>
         <div class="ic-detail">
-          ${num?`<span>🔢 #${num}</span>`:''}${pos?`<span>📍 ${pos}</span>`:''}
-          <span>🏫 ${shortSchool(r.School)}</span>
-          <span><span class="div-badge ${r.Division||''}">${r.Division||''}</span></span>
+          ${num?`<span>🔢 #${esc(num)}</span>`:''}${pos?`<span>📍 ${esc(pos)}</span>`:''}
+          <span>🏫 ${esc(shortSchool(r.School))}</span>
+          <span><span class="div-badge ${esc(r.Division)}">${esc(r.Division)}</span></span>
         </div></div>`;
     }).join('')}</div>`;
   }
@@ -1137,12 +1144,12 @@ function renderLeaderboard() {
   const rows=data.filter(r=>(div==='ALL'||r.Division===div)&&parseFloat(r[stat])>0&&hasGames(r))
     .sort((a,b)=>asc?parseFloat(a[stat])-parseFloat(b[stat]):parseFloat(b[stat])-parseFloat(a[stat])).slice(0,10);
   if(!rows.length){el.innerHTML='<div class="status">No data yet.</div>';return;}
-  el.innerHTML=`<div class="lb-card"><div class="lb-title">${LABELS[stat]||stat} Leaders${div!=='ALL'?' — '+div:''}</div>
-    ${rows.map((r,i)=>`<div class="lb-row" onclick="openProfile('${r.PlayerID}','${cat}')">
+  el.innerHTML=`<div class="lb-card"><div class="lb-title">${esc(LABELS[stat]||stat)} Leaders${div!=='ALL'?' — '+esc(div):''}</div>
+    ${rows.map((r,i)=>`<div class="lb-row" onclick="openProfile(${jsArg(r.PlayerID)},${jsArg(cat)})">
       <div class="lb-rank ${['rank-1','rank-2','rank-3'][i]||'rank-n'}">${i+1}</div>
-      <div><div class="lb-name">${r.Name||''}</div>
-      <div class="lb-school">${r.School||''} &nbsp;<span class="div-badge ${r.Division||''}">${r.Division||''}</span></div></div>
-      <div class="lb-val">${r[stat]||'—'}</div></div>`).join('')}
+      <div><div class="lb-name">${esc(r.Name)}</div>
+      <div class="lb-school">${esc(r.School)} &nbsp;<span class="div-badge ${esc(r.Division)}">${esc(r.Division)}</span></div></div>
+      <div class="lb-val">${esc(r[stat]||'—')}</div></div>`).join('')}
   </div>`;
 }
 
@@ -1152,7 +1159,7 @@ function populateCompare() {
     ...batData.filter(hasGames).map(r=>({id:r.PlayerID,name:r.Name,type:'batting'})),
     ...pitData.filter(hasGames).map(r=>({id:r.PlayerID,name:r.Name,type:'pitching'}))
   ].sort((a,b)=>a.name.localeCompare(b.name));
-  const opts=`<option value="">— none —</option>`+all.map(p=>`<option value="${p.id}|${p.type}">${p.name}</option>`).join('');
+  const opts=`<option value="">— none —</option>`+all.map(p=>`<option value="${esc(p.id)}|${p.type}">${esc(p.name)}</option>`).join('');
   ['cmp-p1','cmp-p2','cmp-p3'].forEach((id,i)=>{
     document.getElementById(id).innerHTML=opts;
     if(i<all.length)document.getElementById(id).value=`${all[i].id}|${all[i].type}`;
@@ -1233,7 +1240,7 @@ function populateHistoryControls() {
     ...batData.filter(hasGames).map(r=>({id:r.PlayerID,name:r.Name,type:'batting'})),
     ...pitData.filter(hasGames).map(r=>({id:r.PlayerID,name:r.Name,type:'pitching'}))
   ].sort((a,b)=>a.name.localeCompare(b.name));
-  document.getElementById('hist-player').innerHTML=all.map(p=>`<option value="${p.id}|${p.type}">${p.name}</option>`).join('');
+  document.getElementById('hist-player').innerHTML=all.map(p=>`<option value="${esc(p.id)}|${p.type}">${esc(p.name)}</option>`).join('');
   updateHistoryStats();
 }
 function updateHistoryStats() {
@@ -1281,7 +1288,7 @@ function openProfile(pid, type) {
     const hot=isHot(c,player[c],type),arrow=trendArrow(c,player[c],prev);
     return `<div class="stat-cell ${hot?'hot':''}">
       <div class="stat-label">${LABELS[c]||c}</div>
-      <div class="stat-value ${hot?'hot-val':''}">${player[c]||'—'}${arrow}</div>
+      <div class="stat-value ${hot?'hot-val':''}">${esc(player[c]||'—')}${arrow}</div>
     </div>`;
   }).join('');
   const thresholds=type==='batting'?BAT_THRESHOLDS:PIT_THRESHOLDS;
@@ -1289,7 +1296,7 @@ function openProfile(pid, type) {
     const v=parseFloat(player[col])||0;
     const pct=LOWER_IS_BETTER.has(col)?Math.min(100,v>0?Math.round((target/v)*100):0):Math.min(100,Math.round((v/target)*100));
     return `<div class="arc-bar-wrap">
-      <div class="arc-label"><span>${LABELS[col]||col}: ${player[col]||'0'}</span><span>Target: ${target}</span></div>
+      <div class="arc-label"><span>${LABELS[col]||col}: ${esc(player[col]||'0')}</span><span>Target: ${target}</span></div>
       <div class="arc-track"><div class="arc-fill ${pct>=100?'over':''}" style="width:${pct}%"></div></div>
     </div>`;
   }).join('');

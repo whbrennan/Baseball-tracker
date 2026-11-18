@@ -9,6 +9,10 @@ on:
     - cron: '23 15 * 1,7-12 1'
   workflow_dispatch:  # allows manual trigger from GitHub anytime
 
+# Least privilege: this workflow's token can only read the repository.
+permissions:
+  contents: read
+
 # One stats run at a time: a manual run waits for a scheduled one (and vice
 # versa) instead of both writing the same sheet rows. The Players-tab fixer
 # shares this group so it never edits Players mid-scrape.
@@ -28,6 +32,8 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false  # don't leave the token in .git/config
 
       - name: Set up Python
         uses: actions/setup-python@v5

@@ -38,8 +38,10 @@ SHEET_NAME     = "Schedule"
 SCHOOLS_FILE   = "schools.json"
 
 SCOPES = [
+    # Sheets only: the scripts open one spreadsheet by ID, which needs no Drive
+    # access. Full Drive scope would let a leaked key touch any file shared
+    # with the service account (#30).
     "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
 ]
 
 HEADERS = {"User-Agent": BROWSER_UA}

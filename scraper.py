@@ -196,8 +196,10 @@ def check_thresholds(player, new_stats, old_row, stat_type):
 def connect():
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
     scopes = [
+        # Sheets only: the scripts open one spreadsheet by ID, which needs no Drive
+        # access. Full Drive scope would let a leaked key touch any file shared
+        # with the service account (#30).
         "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive",
     ]
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     # BackOffHTTPClient retries quota (429), timeout and server errors with backoff.
