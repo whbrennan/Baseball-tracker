@@ -8,11 +8,13 @@ and reports one line per URL:
 
   OK            page loaded and shows the season in its title or heading
   NOT PUBLISHED the site redirected away (sites do this until a season's page exists)
-  MOVED         the same page now lives on another website: update the URL
+  MOVED         the same page now lives on another website (a warning: the
+                scrapers follow the redirect, but the URL should be updated)
   WRONG SEASON  page loaded but doesn't mention the season
   ERROR         HTTP error, timeout or bot wall
 
-Exits 1 if anything isn't OK. Writes nothing to the sheet.
+Exits 1 if any page is NOT PUBLISHED, WRONG SEASON or ERROR; MOVED pages are
+listed as warnings. Writes nothing to the sheet.
 
 Usage:
     python check_season.py [--season 2027] [--players-csv FILE_OR_URL]
@@ -33,6 +35,9 @@ from urllib.parse import urlparse
 import requests
 
 from season import SEASON, season_url
+
+# Verdicts that are reported but don't fail the check.
+WARNINGS = ("MOVED",)
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -123,8 +128,11 @@ def main(argv=None):
     print(f"Checking {len(items)} pages for the {args.season} season\n")
     results = check(args.season, items)
     write_summary(args.season, results)
-    bad = [r for r in results if r[2] != "OK"]
-    print(f"\n{len(results) - len(bad)} OK, {len(bad)} need attention")
+    warn = [r for r in results if r[2] in WARNINGS]
+    bad = [r for r in results if r[2] not in ("OK",) + WARNINGS]
+    print(f"\n{len(results) - len(bad) - len(warn)} OK, {len(warn)} warning(s), {len(bad)} need attention")
+    for label, url, verdict, detail in warn:
+        print(f"  warning: {label}: {detail}")
     return 1 if bad else 0
 
 

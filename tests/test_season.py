@@ -119,3 +119,12 @@ def test_check_targets_build_every_url_for_the_season():
 ])
 def test_check_classify(final, status, title, verdict):
     assert C.classify(2027, "https://a.com/sports/baseball/stats/2027", final, status, title)[0] == verdict
+
+
+def test_check_moved_is_a_warning_not_a_failure(monkeypatch):
+    results = [("stats: A", "u", "OK", ""), ("stats: B", "u", "MOVED", "now at x")]
+    monkeypatch.setattr(C, "load_players", lambda _: [])
+    monkeypatch.setattr(C, "check", lambda season, items: results)
+    assert C.main(["--season", "2026"]) == 0
+    monkeypatch.setattr(C, "check", lambda season, items: results + [("stats: C", "u", "ERROR", "HTTP 500")])
+    assert C.main(["--season", "2026"]) == 1
