@@ -4,6 +4,7 @@ import sys
 import json
 import time
 import requests
+from bs4 import BeautifulSoup
 import gspread
 from gspread.http_client import BackOffHTTPClient
 from gspread.utils import rowcol_to_a1
@@ -551,7 +552,9 @@ EMBEDDED_LISTS = {
 }
 
 
-_SCRIPT_RE = re.compile(r"<script[^>]*>(.*?)</script>", re.S | re.I)
+def scripts_in_html(html):
+    """The text of every <script> in an HTML document, read with a real HTML parser."""
+    return [tag.string or tag.get_text() for tag in BeautifulSoup(html, "html.parser").find_all("script")]
 
 
 def _parse_payload(scripts):
@@ -734,7 +737,7 @@ def _raw_html_payload(page):
         cookies = {c["name"]: c["value"] for c in page.context.cookies(page.url)}
         resp = requests.get(page.url, headers={"User-Agent": BROWSER_UA}, cookies=cookies, timeout=30)
         resp.raise_for_status()
-        return _parse_payload(_SCRIPT_RE.findall(resp.text))
+        return _parse_payload(scripts_in_html(resp.text))
     except Exception as e:
         print(f"    Note: could not fetch raw page for embedded stats: {e}")
         return None

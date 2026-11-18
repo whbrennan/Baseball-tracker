@@ -76,14 +76,14 @@ def test_dropdown_layout_defense_from_embedded_data(page):
 
 
 def test_embedded_data_jersey_missing_vs_no_data():
-    payload = S._parse_payload(S._SCRIPT_RE.findall(load_fixture("maryland_stats")))
+    payload = S._parse_payload(S.scripts_in_html(load_fixture("maryland_stats")))
     assert S.embedded_stats_from_payload(payload, "defense", "999") == {}
     assert S.embedded_stats_from_payload(None, "defense", "9") is None
     assert S.embedded_stats_from_payload(payload, "batting", "9") is None  # not an embedded list
 
 
 def test_embedded_pitching_record_shape():
-    payload = S._parse_payload(S._SCRIPT_RE.findall(load_fixture("maryland_stats")))
+    payload = S._parse_payload(S.scripts_in_html(load_fixture("maryland_stats")))
     pitchers = []
     for obj in payload:
         if isinstance(obj, dict) and "individualStats" in obj:
