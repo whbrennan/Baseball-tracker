@@ -3,6 +3,9 @@ scrape_schedule.py
 Scrapes baseball schedules for all schools in schools.json and writes
 results to the Schedule sheet in the project Google Spreadsheet.
 
+The season comes from season.json (see season.py): each school's schedule_url
+contains {season}, and dates printed without a year get it from the season.
+
 Handles two page layouts:
   - TABLE layout : standard Sidearm ?print=true pages (most schools)
   - JSON layout  : Nuxt/Vue embedded JSON blob (GW and similar)
@@ -13,8 +16,7 @@ import os
 import re
 import sys
 import time
-from collections import Counter
-from datetime import datetime
+from datetime import datetime, timezone
 
 import gspread
 import requests
@@ -23,13 +25,13 @@ from google.oauth2.service_account import Credentials
 from gspread.utils import rowcol_to_a1
 
 from run_status import record_run
+from season import SEASON, season_for_date, season_url, year_for_month
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
 SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")
 SHEET_NAME     = "Schedule"
 SCHOOLS_FILE   = "schools.json"
-CURRENT_YEAR   = datetime.now().year
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -46,7 +48,7 @@ HEADERS = {
 
 SHEET_COLUMNS = [
     "SCHOOL", "DIVISION", "DATE", "TIME", "OPPONENT",
-    "HOME_AWAY", "LOCATION", "TV", "RESULT", "ESPN_TEAM_ID", "LAST_UPDATED",
+    "HOME_AWAY", "LOCATION", "TV", "RESULT", "ESPN_TEAM_ID", "LAST_UPDATED", "SEASON",
 ]
 
 # Schools whose pages embed schedule data as a Nuxt JSON blob
@@ -315,22 +317,48 @@ def _build_game(school, division, date, time_, opponent, home_away,
         "TV":           tv,
         "RESULT":       result,
         "ESPN_TEAM_ID": str(espn_team_id) if espn_team_id else "",
-        "LAST_UPDATED": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "LAST_UPDATED": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "SEASON":       str(game_season(date)),
     }
 
 
-def parse_date(raw):
+def game_season(date):
+    """Season of a YYYY-MM-DD date: fall (Sep-Dec) games count toward next spring."""
+    return season_for_date(int(date[:4]), int(date[5:7]))
+
+
+def row_season(game):
+    """Season of a Schedule row: its SEASON cell, else worked out from its date."""
+    value = str(game.get("SEASON", "")).strip()
+    if value.isdigit():
+        return int(value)
+    date = str(game.get("DATE", ""))
+    return game_season(date) if re.match(r"\d{4}-\d{2}-\d{2}$", date) else None
+
+
+def parse_date(raw, season=None):
+    """Return YYYY-MM-DD, or None.
+
+    A year printed on the page wins. Without one, the year comes from the
+    season: Sep-Dec dates are the fall before it, Jan-Aug dates are in it.
+    """
     raw = re.sub(r"\([A-Za-z]+\)", "", str(raw)).strip()
     raw = re.sub(r"[,]+", "", raw).strip()
-    for fmt in ("%b %d %Y", "%b %d", "%B %d %Y", "%B %d",
-                "%m/%d/%Y", "%m/%d", "%Y-%m-%d"):
+    for fmt in ("%b %d %Y", "%B %d %Y", "%m/%d/%Y", "%Y-%m-%d"):
         try:
-            dt = datetime.strptime(raw, fmt)
-            if dt.year == 1900:
-                dt = dt.replace(year=CURRENT_YEAR)
-            return dt.strftime("%Y-%m-%d")
+            return datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
         except ValueError:
             continue
+    for fmt in ("%b %d", "%B %d", "%m/%d"):
+        try:
+            # Parse inside a leap year so Feb 29 is accepted, then set the real year.
+            dt = datetime.strptime(f"{raw} 2000", f"{fmt} %Y")
+        except ValueError:
+            continue
+        try:
+            return dt.replace(year=year_for_month(dt.month, season)).strftime("%Y-%m-%d")
+        except ValueError:  # Feb 29 in a non-leap season
+            return None
     return None
 
 
@@ -380,6 +408,7 @@ def scrape_school(school_cfg):
         print(f"  [skip] {school}: no schedule_url")
         return []
 
+    base_url = season_url(base_url)
     sep = "&" if "?" in base_url else "?"
     url = f"{base_url}{sep}print=true"
 
@@ -400,6 +429,10 @@ def scrape_school(school_cfg):
             games  = parse_json_layout(soup, school, division, espn_team_id)
             layout = "json (auto)"
 
+    other = [g for g in games if g["SEASON"] != str(SEASON)]
+    if other:
+        print(f"    skipped {len(other)} games outside the {SEASON} season")
+        games = [g for g in games if g["SEASON"] == str(SEASON)]
     print(f"    [{layout}] {len(games)} games")
     return games
 
@@ -420,41 +453,46 @@ def read_existing_games(sheet):
     return games, len(values)
 
 
-def _season(games):
-    """Most common year among the games' dates, or None."""
-    years = Counter(str(g.get("DATE", ""))[:4] for g in games if g.get("DATE"))
-    return years.most_common(1)[0][0] if years else None
-
-
-def merge_with_previous(school_names, new_by_school, previous_games):
+def merge_with_previous(school_names, new_by_school, previous_games, config=None, season=None):
     """Combine this run's games with the sheet's existing rows, per school.
 
     A school keeps its previous rows when this run found no games for it, or
-    (within the same season) far fewer than before, since that almost always
-    means the site was down or its layout changed rather than games vanishing.
-    Schools no longer in schools.json are dropped.
+    far fewer than before, since that almost always means the site was down or
+    its layout changed rather than games vanishing. Only previous rows from
+    the current season are kept, so last season's schedule is never carried
+    into a new one. Kept rows get DIVISION and ESPN_TEAM_ID from config
+    (school -> schools.json entry). Schools no longer in schools.json are dropped.
 
     Returns (games, kept) where kept maps school -> reason previous rows were kept.
     """
+    season = SEASON if season is None else season
+    config = config or {}
     previous_by_school = {}
     for game in previous_games:
-        previous_by_school.setdefault(game.get("SCHOOL", ""), []).append(game)
+        if row_season(game) == season:
+            previous_by_school.setdefault(game.get("SCHOOL", ""), []).append(game)
 
     merged, kept = [], {}
     for school in school_names:
         new = new_by_school.get(school, [])
         previous = previous_by_school.get(school, [])
-        if previous and not new:
-            kept[school] = f"no games scraped; kept {len(previous)} previous rows"
-            merged.extend(previous)
-        elif (previous and _season(new) == _season(previous)
-              and len(new) < len(previous) * MIN_KEEP_FRACTION):
-            kept[school] = (f"only {len(new)} games scraped vs {len(previous)} before; "
-                            f"kept previous rows")
-            merged.extend(previous)
+        if previous and (not new or len(new) < len(previous) * MIN_KEEP_FRACTION):
+            kept[school] = (f"no games scraped; kept {len(previous)} previous rows" if not new else
+                            f"only {len(new)} games scraped vs {len(previous)} before; kept previous rows")
+            merged.extend(_refresh_school_fields(g, config.get(school), season) for g in previous)
         else:
             merged.extend(new)
     return merged, kept
+
+
+def _refresh_school_fields(game, cfg, season):
+    game = dict(game)
+    game["SEASON"] = str(season)
+    if cfg:
+        game["DIVISION"] = cfg.get("division", game.get("DIVISION", ""))
+        espn = cfg.get("espn_team_id", "")
+        game["ESPN_TEAM_ID"] = str(espn) if espn else ""
+    return game
 
 
 def write_to_sheet(sheet, all_games, previous_row_count):
@@ -487,7 +525,7 @@ def main():
     with open(SCHOOLS_FILE) as f:
         schools = json.load(f)
 
-    print(f"Scraping {len(schools)} schools (year={CURRENT_YEAR})...\n")
+    print(f"Scraping {len(schools)} schools for the {SEASON} season...\n")
 
     new_by_school, errors = {}, {}
     for school_cfg in schools:
@@ -502,7 +540,8 @@ def main():
     sheet = get_sheet()
     previous_games, previous_row_count = read_existing_games(sheet)
     school_names = [s.get("school", "?") for s in schools]
-    all_games, kept = merge_with_previous(school_names, new_by_school, previous_games)
+    config = {s.get("school", "?"): s for s in schools}
+    all_games, kept = merge_with_previous(school_names, new_by_school, previous_games, config)
 
     ok_schools, failed_schools = [], []
     for school in school_names:

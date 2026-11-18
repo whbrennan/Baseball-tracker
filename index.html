@@ -169,7 +169,7 @@ td:first-child,td:nth-child(2),td:nth-child(3){text-align:left;}
 <body>
 
 <header>
-  <h1>College Baseball <span>Tracker</span> 2026</h1>
+  <h1>College Baseball <span>Tracker</span> <em id="season-label" style="font-style:normal">2026</em></h1>
   <div id="last-updated">Loading stats…</div>
 </header>
 
@@ -497,6 +497,27 @@ const SCHOOL_PLAYERS = {
   'Marymount':                 ['Shane Howie', 'Brett Triplett'],
 };
 
+// ── SEASON ─────────────────────────────────────────────────────────────────────
+// The season comes from the data: the newest Season on the current-stats tabs
+// (rows written before the Season column existed count as the year they were
+// written). History is filtered to that season, so deltas, streaks, trend
+// arrows and charts never compare a new season with the end of the last one.
+let SEASON = null;
+function rowSeason(r) {
+  const s = parseInt(r.Season || r.SEASON, 10);
+  if (!Number.isNaN(s)) return s;
+  const y = parseInt((r.Business_Date_ET || r.Last_Updated || '').slice(0, 4), 10);
+  return Number.isNaN(y) ? null : y;
+}
+function setSeasonFrom(rows) {
+  const seasons = rows.map(rowSeason).filter(Boolean);
+  if (!seasons.length) return;
+  SEASON = Math.max(...seasons);
+  document.title = `College Baseball Tracker ${SEASON}`;
+  document.getElementById('season-label').textContent = SEASON;
+}
+const inSeason = rows => SEASON === null ? rows : rows.filter(r => rowSeason(r) === SEASON);
+
 // ── CSV ────────────────────────────────────────────────────────────────────────
 const csvUrl = s => `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet=${s}`;
 function parseCsv(text) {
@@ -549,10 +570,11 @@ async function init() {
     [batData, pitData, defData] = await Promise.all([
       fetchSheet('Batting'), fetchSheet('Pitching'), fetchSheet('Defense')
     ]);
+    setSeasonFrom([...batData, ...pitData, ...defData]);
     try {
-      [batHistory, pitHistory] = await Promise.all([
+      [batHistory, pitHistory] = (await Promise.all([
         fetchSheet('Batting_History'), fetchSheet('Pitching_History')
-      ]);
+      ])).map(inSeason);
     } catch(e) { dbg(`History tabs not found (optional): ${e.message}`, 'warn'); }
     const ts = [...batData,...pitData].map(r=>r.Last_Updated).filter(Boolean).sort().pop();
     document.getElementById('last-updated').textContent = ts ? `Last updated: ${ts}` : 'Stats loaded';
@@ -751,9 +773,10 @@ async function loadTodayPerformances() {
       fetchSheet('Pitching_History'),
       fetchSheet('Defense_History'),
     ]);
-    bh = battingRows;
-    ph = pitchingRows;
-    dh = defenseRows;
+    if (SEASON === null) setSeasonFrom([...battingRows, ...pitchingRows, ...defenseRows]);
+    bh = inSeason(battingRows);
+    ph = inSeason(pitchingRows);
+    dh = inSeason(defenseRows);
     latestCompletedGameDates = buildLatestCompletedGameDates(scheduleRows, today);
     todayBatHist = bh.filter(r => shouldShowPerformanceRow(r, today, latestCompletedGameDates));
     todayPitHist = ph.filter(r => shouldShowPerformanceRow(r, today, latestCompletedGameDates));

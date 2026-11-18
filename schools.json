@@ -2,7 +2,7 @@
   {
     "school": "East Tennessee State",
     "division": "D1",
-    "schedule_url": "https://etsubucs.com/sports/baseball/schedule/2026",
+    "schedule_url": "https://etsubucs.com/sports/baseball/schedule/{season}",
     "espn_team_id": "304",
     "players": ["Tyler Fetterman"],
     "notes": ""
@@ -10,7 +10,7 @@
   {
     "school": "Maryland",
     "division": "D1",
-    "schedule_url": "https://umterps.com/sports/baseball/schedule/2026",
+    "schedule_url": "https://umterps.com/sports/baseball/schedule/{season}",
     "espn_team_id": "87",
     "players": ["David Mendez"],
     "notes": ""
@@ -18,7 +18,7 @@
   {
     "school": "Shippensburg",
     "division": "D2",
-    "schedule_url": "https://shipraiders.com/sports/baseball/schedule/2026",
+    "schedule_url": "https://shipraiders.com/sports/baseball/schedule/{season}",
     "espn_team_id": "",
     "players": ["Kyle Ausgotharp"],
     "notes": ""
@@ -26,15 +26,15 @@
   {
     "school": "Monmouth",
     "division": "D1",
-    "schedule_url": "https://monmouthhawks.com/sports/baseball/schedule",
+    "schedule_url": "https://monmouthhawks.com/sports/baseball/schedule/{season}",
     "espn_team_id": "178",
     "players": ["Colin Scherer"],
-    "notes": "No year in URL — may need updating each season"
+    "notes": ""
   },
   {
     "school": "Penn State Harrisburg",
     "division": "D3",
-    "schedule_url": "https://psuharrisburgsports.com/sports/baseball/schedule/2026",
+    "schedule_url": "https://psuharrisburgsports.com/sports/baseball/schedule/{season}",
     "espn_team_id": "",
     "players": ["Ben Ross"],
     "notes": ""
@@ -42,7 +42,7 @@
   {
     "school": "Iona",
     "division": "D1",
-    "schedule_url": "https://ionagaels.com/sports/baseball/schedule/2026",
+    "schedule_url": "https://ionagaels.com/sports/baseball/schedule/{season}",
     "espn_team_id": "372",
     "players": ["Brendan Moenke"],
     "notes": ""
@@ -50,7 +50,7 @@
   {
     "school": "Roanoke",
     "division": "D3",
-    "schedule_url": "https://roanokemaroons.com/sports/baseball/schedule/2026",
+    "schedule_url": "https://roanokemaroons.com/sports/baseball/schedule/{season}",
     "espn_team_id": "",
     "players": ["Chase Tripplett"],
     "notes": ""
@@ -58,7 +58,7 @@
   {
     "school": "Mary Washington",
     "division": "D3",
-    "schedule_url": "https://umweagles.com/sports/baseball/schedule/2026",
+    "schedule_url": "https://umweagles.com/sports/baseball/schedule/{season}",
     "espn_team_id": "",
     "players": ["Brady Yates"],
     "notes": ""
@@ -66,7 +66,7 @@
   {
     "school": "University of Lynchburg",
     "division": "D3",
-    "schedule_url": "https://lynchburgsports.com/sports/baseball/schedule/2026",
+    "schedule_url": "https://lynchburgsports.com/sports/baseball/schedule/{season}",
     "espn_team_id": "",
     "players": ["Kase Cochran"],
     "notes": ""
@@ -74,7 +74,7 @@
   {
     "school": "Christopher Newport",
     "division": "D3",
-    "schedule_url": "https://www.cnusports.com/sports/baseball/schedule/2026",
+    "schedule_url": "https://www.cnusports.com/sports/baseball/schedule/{season}",
     "espn_team_id": "",
     "players": ["Luke Baker", "Matthew Roussey"],
     "notes": ""
@@ -82,7 +82,7 @@
   {
     "school": "William & Mary",
     "division": "D1",
-    "schedule_url": "https://tribeathletics.com/sports/baseball/schedule/2026",
+    "schedule_url": "https://tribeathletics.com/sports/baseball/schedule/{season}",
     "espn_team_id": "289",
     "players": ["Chad Yates"],
     "notes": ""
@@ -90,7 +90,7 @@
   {
     "school": "Wingate",
     "division": "D2",
-    "schedule_url": "https://wingatebulldogs.com/sports/baseball/schedule/2026",
+    "schedule_url": "https://wingatebulldogs.com/sports/baseball/schedule/{season}",
     "espn_team_id": "",
     "players": ["Carter Schuster"],
     "notes": ""
@@ -98,7 +98,7 @@
   {
     "school": "Bridgewater",
     "division": "D3",
-    "schedule_url": "https://bridgewatereagles.com/sports/baseball/schedule/2026",
+    "schedule_url": "https://bridgewatereagles.com/sports/baseball/schedule/{season}",
     "espn_team_id": "",
     "players": ["Chase Obstgarten"],
     "notes": ""
@@ -106,7 +106,7 @@
   {
     "school": "Virginia Wesleyan",
     "division": "D3",
-    "schedule_url": "https://vwuathletics.com/sports/baseball/schedule/2026",
+    "schedule_url": "https://vwuathletics.com/sports/baseball/schedule/{season}",
     "espn_team_id": "",
     "players": ["Sean Tracey"],
     "notes": ""
@@ -114,7 +114,7 @@
   {
     "school": "Harford Community College",
     "division": "NJCAA",
-    "schedule_url": "https://harfordathletics.com/sports/baseball/schedule/2026",
+    "schedule_url": "https://harfordathletics.com/sports/baseball/schedule/{season}",
     "espn_team_id": "",
     "players": ["Jack McDonald"],
     "notes": "NJCAA — no ESPN coverage"
@@ -122,15 +122,15 @@
   {
     "school": "George Washington",
     "division": "D1",
-    "schedule_url": "https://gwsports.com/sports/baseball/schedule",
+    "schedule_url": "https://gwsports.com/sports/baseball/schedule/{season}",
     "espn_team_id": "71",
     "players": ["Liam Thyen"],
-    "notes": "No year in URL — may need updating each season"
+    "notes": ""
   },
   {
     "school": "Tufts",
     "division": "D3",
-    "schedule_url": "https://gotuftsjumbos.com/sports/baseball/schedule/2026",
+    "schedule_url": "https://gotuftsjumbos.com/sports/baseball/schedule/{season}",
     "espn_team_id": "",
     "players": ["Zach Brennan"],
     "notes": ""
@@ -138,23 +138,23 @@
   {
     "school": "ECU",
     "division": "D1",
-    "schedule_url": "https://ecupirates.com/sports/baseball/schedule",
+    "schedule_url": "https://ecupirates.com/sports/baseball/schedule/{season}",
     "espn_team_id": "94",
     "players": ["Grady Lenahan"],
-    "notes": "No year in URL — may need updating each season"
+    "notes": ""
   },
   {
   "school": "Marymount",
   "division": "D3",
-  "schedule_url": "https://marymountsaints.com/sports/baseball/schedule",
+  "schedule_url": "https://marymountsaints.com/sports/baseball/schedule/{season}",
   "espn_team_id": "",
   "players": ["Shane Howie", "Brett Triplett"],
-  "notes": "No year in URL — may need updating each season"
+  "notes": ""
   },
     {
     "school": "Radford",
     "division": "D1",
-    "schedule_url": "https://radfordathletics.com/sports/baseball/schedule/2026",
+    "schedule_url": "https://radfordathletics.com/sports/baseball/schedule/{season}",
     "espn_team_id": "421",
     "players": ["Luke Sullivan"],
     "notes": ""
@@ -162,7 +162,7 @@
   {
     "school": "Harding",
     "division": "D2",
-    "schedule_url": "https://hardingsports.com/sports/baseball/schedule/2026",
+    "schedule_url": "https://hardingsports.com/sports/baseball/schedule/{season}",
     "espn_team_id": "",
     "players": ["Maddox Webb"],
     "notes": ""

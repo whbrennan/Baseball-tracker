@@ -1,0 +1,4 @@
+{
+  "season": 2026,
+  "_comment": "The college season being tracked (the spring year). Change it once a year, in January; see PRESEASON.md. Stats and schedule URLs are built from it."
+}

@@ -1,4 +1,8 @@
-playwright==1.41.2
-gspread
-google-auth
-requests
+# Runtime dependencies for scraper.py, scrape_schedule.py and fix_players_sheet.py.
+# Pinned so a new release can't break a scheduled run; Dependabot proposes upgrades.
+# After changing the Playwright version, CI downloads the matching Chromium.
+beautifulsoup4==4.15.0
+google-auth==2.62.2
+gspread==6.2.1
+playwright==1.63.0
+requests==2.34.2

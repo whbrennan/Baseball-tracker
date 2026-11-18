@@ -1,1 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Credentials: never commit a service-account key or env file
+*.env
+.env*
+credentials*.json
+service_account*.json
+*-credentials.json
+
+# Local scratch
 debug_defense.py
+.DS_Store
