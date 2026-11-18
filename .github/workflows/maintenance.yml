@@ -33,6 +33,8 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false  # don't leave the token in .git/config
 
       - name: Keep scheduled workflows enabled
         run: |
