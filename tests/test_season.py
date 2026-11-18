@@ -114,6 +114,7 @@ def test_check_targets_build_every_url_for_the_season():
     ("https://a.com/sports/baseball/schedule", 200, "Baseball Schedule", "NOT PUBLISHED"),
     ("https://a.com/sports/baseball/stats/2027", 200, "Baseball Cumulative Statistics", "WRONG SEASON"),
     ("https://a.com/sports/baseball/stats/2027", 403, "", "ERROR"),
+    ("https://b.com/sports/baseball/stats/2027", 200, "2027 Baseball Statistics", "MOVED"),
     ("https://a.com/sports/baseball/stats/2027", None, "", "ERROR"),
 ])
 def test_check_classify(final, status, title, verdict):

@@ -8,6 +8,7 @@ and reports one line per URL:
 
   OK            page loaded and shows the season in its title or heading
   NOT PUBLISHED the site redirected away (sites do this until a season's page exists)
+  MOVED         the same page now lives on another website: update the URL
   WRONG SEASON  page loaded but doesn't mention the season
   ERROR         HTTP error, timeout or bot wall
 
@@ -26,6 +27,8 @@ import io
 import json
 import os
 import sys
+
+from urllib.parse import urlparse
 
 import requests
 
@@ -68,8 +71,11 @@ def classify(season, requested_url, final_url, status, title_text):
     """Return (verdict, detail) for one loaded page."""
     if status is None or status >= 400:
         return "ERROR", f"HTTP {status}" if status else "no response"
-    if final_url.split("?")[0].rstrip("/") != requested_url.split("?")[0].rstrip("/"):
+    want, got = urlparse(requested_url), urlparse(final_url)
+    if got.path.rstrip("/") != want.path.rstrip("/"):
         return "NOT PUBLISHED", f"redirects to {final_url}"
+    if got.hostname != want.hostname:
+        return "MOVED", f"now at {got.scheme}://{got.hostname} -- update the URL"
     if str(season) not in title_text:
         return "WRONG SEASON", (title_text.strip()[:80] or "no title")
     return "OK", title_text.strip()[:80]

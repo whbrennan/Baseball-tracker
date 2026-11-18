@@ -106,7 +106,7 @@
   {
     "school": "Virginia Wesleyan",
     "division": "D3",
-    "schedule_url": "https://vwuathletics.com/sports/baseball/schedule/{season}",
+    "schedule_url": "https://battenathletics.com/sports/baseball/schedule/{season}",
     "espn_team_id": "",
     "players": ["Sean Tracey"],
     "notes": ""
