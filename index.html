@@ -694,10 +694,10 @@ function renderTodayGames(games, espnScores) {
   }
   el.innerHTML = games.map(g => {
     const players  = SCHOOL_PLAYERS[g.school] || [];
-    const ha       = g.homeAway === 'H' ? 'vs' : 'at';
-    const haBadge  = g.homeAway === 'H'
-      ? '<span class="badge-home">HOME</span>'
-      : '<span class="badge-away">AWAY</span>';
+    const ha       = g.homeAway === 'A' ? 'at' : 'vs';
+    const haBadge  = g.homeAway === 'H' ? '<span class="badge-home">HOME</span>'
+                   : g.homeAway === 'N' ? '<span class="badge-away">NEUTRAL</span>'
+                   : '<span class="badge-away">AWAY</span>';
     const tvBadge  = g.tv ? `<span class="badge-tv">${g.tv}</span>` : '';
     const divBadge = `<span class="badge-div">${g.division}</span>`;
     let scoreBlock = '';

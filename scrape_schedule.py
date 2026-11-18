@@ -51,6 +51,10 @@ SHEET_COLUMNS = [
     "HOME_AWAY", "LOCATION", "TV", "RESULT", "ESPN_TEAM_ID", "LAST_UPDATED", "SEASON",
 ]
 
+# A separate home/away column, and what its values mean. Wins over "vs."/"at".
+HOME_AWAY_HEADERS = {"AT", "H/A", "HOME/AWAY", "HOME / AWAY"}
+HOME_AWAY_VALUES = {"HOME": "H", "H": "H", "AWAY": "A", "A": "A", "NEUTRAL": "N", "N": "N"}
+
 # Schools whose pages embed schedule data as a Nuxt JSON blob
 JSON_LAYOUT_SCHOOLS = {"George Washington"}
 
@@ -156,8 +160,8 @@ def parse_json_layout(soup, school, division, espn_team_id):
             game_time = normalise_time(str(res(game_obj.get("time", "TBA")) or "TBA"))
 
             # ── Home / Away ──
-            loc_ind   = res(game_obj.get("location_indicator", "H"))
-            home_away = "H" if str(loc_ind).upper() != "A" else "A"
+            loc_ind   = str(res(game_obj.get("location_indicator", "H"))).upper()
+            home_away = loc_ind if loc_ind in ("A", "N") else "H"
 
             # ── Location ──
             location  = str(res(game_obj.get("location", "")) or "")
@@ -242,6 +246,8 @@ def parse_table_layout(soup, school, division, espn_team_id):
                 col_map["result"] = i
             elif "TIME" in txt:
                 col_map["time"] = i
+            elif txt in HOME_AWAY_HEADERS:
+                col_map["ha"] = i
             elif any(x in txt for x in ("TV", "NETWORK")):
                 col_map["tv"] = i
 
@@ -273,6 +279,8 @@ def _extract_from_table_row(cells, col_map, school, division, espn_team_id):
     opponent, home_away = parse_opponent(opp_raw)
     if not opponent:
         return None
+    if "ha" in col_map:
+        home_away = HOME_AWAY_VALUES.get(cell_text(col_map["ha"]).strip().upper(), home_away)
 
     loc_idx  = col_map.get("loc", 2)
     location = cell_text(loc_idx)

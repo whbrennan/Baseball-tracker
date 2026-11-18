@@ -108,13 +108,12 @@ def test_table_layout_etsu():
     assert all(g["DATE"].startswith("2026-") for g in games)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Known bug: ETSU's print page gives home/away in its own 'At' column "
-    "(26 Home, 26 Away, 1 Neutral), which parse_table_layout ignores, so every game is 'H'."))
-def test_table_layout_etsu_home_away():
+def test_table_layout_etsu_home_away_column():
+    # ETSU gives home/away in its own "At" column (#55).
     soup = BeautifulSoup(load_fixture("etsu_schedule"), "html.parser")
     games = SS.parse_table_layout(soup, "East Tennessee State", "D1", "304")
-    assert sum(g["HOME_AWAY"] == "A" for g in games) == 26
+    counts = {ha: sum(g["HOME_AWAY"] == ha for g in games) for ha in "HAN"}
+    assert counts == {"H": 26, "A": 26, "N": 1}
 
 
 def test_json_layout_gw():
@@ -126,6 +125,7 @@ def test_json_layout_gw():
         "DATE": "2026-02-13", "TIME": "4:00PM", "OPPONENT": "Western Carolina", "HOME_AWAY": "A",
         "LOCATION": "Cullowhee, NC", "TV": "ESPN+", "RESULT": "L, 5-7"}
     assert sum(g["HOME_AWAY"] == "A" for g in games) == 24
+    assert sum(g["HOME_AWAY"] == "N" for g in games) == 1  # A-10 tournament, Tysons
     assert sum(g["TV"] == "ESPN+" for g in games) == 14
 
 
