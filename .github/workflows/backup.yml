@@ -1,0 +1,78 @@
+name: Back Up Sheet
+
+# Saves every tab of the Google Sheet as CSV on the data-backup branch
+# (backups/<tab>.csv), committing only when something changed. See RESTORE.md.
+# The branch keeps nightly data commits out of main, where they would set off
+# the tests and code scanning every night.
+on:
+  schedule:
+    # In season (February-June): nightly, after the last stats run (02:00 UTC).
+    - cron: '17 7 * 2-6 *'
+    # Offseason: weekly (Sunday).
+    - cron: '17 7 * 1,7-12 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Shares the stats scraper's group so a backup never reads the sheet mid-scrape.
+concurrency:
+  group: sheet-stats
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # push the backup commit to the data-backup branch
+    timeout-minutes: 10
+    env:
+      PYTHONUNBUFFERED: '1'
+      BRANCH: data-backup
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+        # The token is kept here (unlike other workflows) because this job
+        # pushes the backup commit.
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check out the backup branch
+        run: |
+          if git fetch --depth=1 origin "$BRANCH"; then
+            git worktree add -B "$BRANCH" backup FETCH_HEAD
+          else
+            echo "No $BRANCH branch yet; starting it."
+            git worktree add --orphan -b "$BRANCH" backup
+          fi
+
+      - name: Export the sheet
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+        run: |
+          python backup_sheet.py backup/backups
+          cp RESTORE.md backup/README.md
+
+      - name: Commit and push if anything changed
+        working-directory: backup
+        run: |
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes since the last backup."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -q -m "Sheet backup $(date -u +%Y-%m-%d)"
+          git push origin "HEAD:$BRANCH"
+          git diff --stat HEAD~1 2>/dev/null >> "$GITHUB_STEP_SUMMARY" || git show --stat HEAD >> "$GITHUB_STEP_SUMMARY"
